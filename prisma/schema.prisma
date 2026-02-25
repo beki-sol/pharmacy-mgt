@@ -1,0 +1,443 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../app/generated/prisma"
+  previewFeatures = ["fullTextSearchPostgres"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                   String         @id @default(cuid())
+  email                String         @unique
+  password             String
+  name                 String
+  phone                String?
+  role                 Role           @default(SALES_ASSISTANT)
+  twoFactorEnabled     Boolean        @default(false)
+  twoFactorSecret      String?
+  refreshToken         String?
+  lastLogin            DateTime?
+  passwordResetToken   String?
+  passwordResetExpires DateTime?
+  isActive             Boolean        @default(true)
+  telegramChatId       String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  accounts             Account[]
+  auditLogs            AuditLog[]
+  inventoryLogs        InventoryLog[]
+  notifications        Notification[]
+  sales                Sale[]
+  sessions             Session[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Drug {
+  id               String             @id @default(cuid())
+  name             String
+  genericName      String?
+  brand            String?
+  category         DrugCategory
+  dosage           String
+  unit             String
+  price            Decimal            @db.Decimal(10, 2)
+  costPrice        Decimal            @db.Decimal(10, 2)
+  stock            Int                @default(0)
+  minStockLevel    Int                @default(10)
+  maxStockLevel    Int                @default(100)
+  reorderPoint     Int                @default(20)
+  expiryDate       DateTime?
+  batchNumber      String?
+  supplierId       String?
+  barcode          String?            @unique
+  isActive         Boolean            @default(true)
+  description      String?
+  sideEffects      String?
+  storageCondition String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  supplier         Supplier?          @relation(fields: [supplierId], references: [id])
+  batches          DrugBatch[]
+  inventoryLogs    InventoryLog[]
+  prescriptions    PrescriptionItem[]
+  purchaseItems    PurchaseItem[]
+  saleItems        SaleItem[]
+
+  @@index([category])
+  @@index([supplierId])
+  @@index([isActive])
+  @@index([name])
+  @@index([genericName])
+  @@index([brand])
+}
+
+model DrugBatch {
+  id          String     @id @default(cuid())
+  drugId      String
+  batchNumber String
+  expiryDate  DateTime
+  quantity    Int
+  remaining   Int
+  costPrice   Decimal    @db.Decimal(10, 2)
+  createdAt   DateTime   @default(now())
+  drug        Drug       @relation(fields: [drugId], references: [id], onDelete: Cascade)
+  saleItems   SaleItem[]
+
+  @@unique([drugId, batchNumber])
+  @@index([expiryDate])
+}
+
+model Supplier {
+  id             String          @id @default(cuid())
+  name           String
+  company        String?
+  contactPerson  String?
+  email          String?
+  phone          String?
+  address        String?
+  taxId          String?
+  paymentTerms   String?
+  creditLimit    Decimal?        @db.Decimal(10, 2)
+  balance        Decimal         @default(0) @db.Decimal(10, 2)
+  isActive       Boolean         @default(true)
+  rating         Int?            @default(5)
+  notes          String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  drugs          Drug[]
+  payments       Payment[]
+  purchaseOrders PurchaseOrder[]
+
+  @@index([name])
+  @@index([isActive])
+}
+
+model Sale {
+  id             String         @id @default(cuid())
+  invoiceNumber  String         @unique
+  userId         String
+  customerName   String?
+  customerPhone  String?
+  customerEmail  String?
+  totalAmount    Decimal        @db.Decimal(10, 2)
+  discount       Decimal        @default(0) @db.Decimal(10, 2)
+  tax            Decimal        @default(0) @db.Decimal(10, 2)
+  netAmount      Decimal        @db.Decimal(10, 2)
+  status         SaleStatus     @default(COMPLETED)
+  paymentMethod  String
+  insuranceId    String?
+  doctorName     String?
+  notes          String?
+  isPrescription Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  inventoryLogs  InventoryLog[]
+  payments       Payment[]
+  prescriptions  Prescription[]
+  insurance      Insurance?     @relation(fields: [insuranceId], references: [id])
+  user           User           @relation(fields: [userId], references: [id])
+  saleItems      SaleItem[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([status])
+  @@index([invoiceNumber])
+}
+
+model SaleItem {
+  id          String     @id @default(cuid())
+  saleId      String
+  drugId      String
+  quantity    Int
+  unitPrice   Decimal    @db.Decimal(10, 2)
+  discount    Decimal    @default(0) @db.Decimal(10, 2)
+  tax         Decimal    @default(0) @db.Decimal(10, 2)
+  subtotal    Decimal    @db.Decimal(10, 2)
+  batchNumber String?
+  batchId     String?
+  batch       DrugBatch? @relation(fields: [batchId], references: [id])
+  drug        Drug       @relation(fields: [drugId], references: [id])
+  sale        Sale       @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@index([drugId])
+}
+
+model Prescription {
+  id                 String             @id @default(cuid())
+  prescriptionNumber String             @unique
+  saleId             String?
+  patientName        String
+  patientAge         Int
+  patientGender      String
+  patientWeight      Decimal?           @db.Decimal(5, 2)
+  patientHeight      Decimal?           @db.Decimal(5, 2)
+  doctorName         String
+  doctorLicense      String?
+  doctorPhone        String?
+  diagnosis          String?
+  notes              String?
+  issueDate          DateTime           @default(now())
+  expiryDate         DateTime
+  isDispensed        Boolean            @default(false)
+  sale               Sale?              @relation(fields: [saleId], references: [id])
+  prescriptionItems  PrescriptionItem[]
+
+  @@index([patientName])
+  @@index([doctorName])
+  @@index([issueDate])
+}
+
+model PrescriptionItem {
+  id             String       @id @default(cuid())
+  prescriptionId String
+  drugId         String
+  dosage         String
+  frequency      String
+  duration       String
+  instructions   String?
+  quantity       Int
+  isDispensed    Boolean      @default(false)
+  drug           Drug         @relation(fields: [drugId], references: [id])
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+
+  @@index([prescriptionId])
+  @@index([drugId])
+}
+
+model PurchaseOrder {
+  id               String         @id @default(cuid())
+  orderNumber      String         @unique
+  supplierId       String
+  totalAmount      Decimal        @db.Decimal(10, 2)
+  status           String         @default("PENDING")
+  orderDate        DateTime       @default(now())
+  expectedDelivery DateTime?
+  receivedDate     DateTime?
+  approvedBy       String?
+  notes            String?
+  inventoryLogs    InventoryLog[]
+  payments         Payment[]
+  purchaseItems    PurchaseItem[]
+  supplier         Supplier       @relation(fields: [supplierId], references: [id])
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([orderDate])
+}
+
+model PurchaseItem {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  drugId          String
+  quantity        Int
+  unitCost        Decimal       @db.Decimal(10, 2)
+  batchNumber     String?
+  expiryDate      DateTime?
+  drug            Drug          @relation(fields: [drugId], references: [id])
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@index([purchaseOrderId])
+  @@index([drugId])
+}
+
+model InventoryLog {
+  id              String          @id @default(cuid())
+  drugId          String
+  type            InventoryAction
+  quantity        Int
+  previousStock   Int
+  newStock        Int
+  saleId          String?
+  purchaseOrderId String?
+  batchNumber     String?
+  notes           String?
+  userId          String
+  createdAt       DateTime        @default(now())
+  drug            Drug            @relation(fields: [drugId], references: [id])
+  purchaseOrder   PurchaseOrder?  @relation(fields: [purchaseOrderId], references: [id])
+  sale            Sale?           @relation(fields: [saleId], references: [id])
+  user            User            @relation(fields: [userId], references: [id])
+
+  @@index([drugId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([userId])
+  @@index([saleId])
+  @@index([purchaseOrderId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  entity    String
+  entityId  String
+  oldData   Json?
+  newData   Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entity])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String
+  isRead    Boolean  @default(false)
+  link      String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model Payment {
+  id              String         @id @default(cuid())
+  saleId          String?
+  purchaseOrderId String?
+  amount          Decimal        @db.Decimal(10, 2)
+  method          String
+  status          String         @default("PENDING")
+  transactionId   String?
+  notes           String?
+  paidAt          DateTime?
+  supplierId      String?
+  chapaTxRef      String?        @unique
+  chapaTxId       String?
+  paymentLink     String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  sale            Sale?          @relation(fields: [saleId], references: [id])
+  supplier        Supplier?      @relation(fields: [supplierId], references: [id])
+
+  @@index([saleId])
+  @@index([purchaseOrderId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([chapaTxRef])
+}
+
+model ChapaWebhookLog {
+  id          String    @id @default(cuid())
+  eventType   String
+  chapaTxRef  String?
+  chapaTxId   String?
+  payload     Json
+  processed   Boolean   @default(false)
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([chapaTxRef])
+  @@index([processed])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  category    String
+  description String
+  amount      Decimal  @db.Decimal(10, 2)
+  date        DateTime @default(now())
+  approvedBy  String?
+  receiptUrl  String?
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  @@index([category])
+  @@index([date])
+}
+
+model Insurance {
+  id            String   @id @default(cuid())
+  name          String
+  phone         String?
+  email         String?
+  address       String?
+  contactPerson String?
+  coverage      Decimal? @db.Decimal(5, 2)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  sales         Sale[]
+
+  @@index([name])
+}
+
+enum Role {
+  ADMIN
+  PHARMACIST
+  SALES_ASSISTANT
+  MANAGER
+  INVENTORY_MANAGER
+}
+
+enum DrugCategory {
+  PRESCRIPTION
+  OVER_THE_COUNTER
+  CONTROLLED
+  HERBAL
+  SUPPLEMENTS
+  VACCINE
+  MEDICAL_SUPPLY
+}
+
+enum SaleStatus {
+  COMPLETED
+  PENDING
+  CANCELLED
+  REFUNDED
+  PARTIALLY_PAID
+}
+
+enum InventoryAction {
+  PURCHASE
+  SALE
+  ADJUSTMENT
+  RETURN
+  DAMAGE
+  EXPIRED
+  TRANSFER
+}
