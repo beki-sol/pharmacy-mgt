@@ -1,57 +1,80 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
 import { Header } from "@/app/components/dashboard/Header";
 import { Button } from "@/app/components/ui/Button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/Card";
+import { Input } from "@/app/components/ui/Input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/app/components/ui/Table";
 import { Badge } from "@/app/components/ui/Badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/app/components/ui/Table";
-import { formatCurrency, formatDateTime } from "@/app/lib/utils";
-import { ArrowLeft } from "lucide-react";
+import { Card, CardContent } from "@/app/components/ui/Card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/app/components/ui/Select";
+import { Label } from "@/app/components/ui/Label";
+import { Plus, Search, Eye } from "lucide-react";
 import Link from "next/link";
+import { formatCurrency, formatDate } from "@/app/lib/utils";
+import { DatePickerWithRange } from "@/app/components/ui/data-range-picker";
+import { addDays } from "date-fns";
 
-export default function SaleDetailPage() {
-  const params = useParams();
-  const router = useRouter();
-  const saleId = params.id as string;
-
-  const [sale, setSale] = useState<any>(null);
+export default function SalesPage() {
+  const [sales, setSales] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, pages: 0 });
+
+  // Filters
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
+    from: addDays(new Date(), -30),
+    to: new Date(),
+  });
 
   useEffect(() => {
-    const fetchSale = async () => {
+    const fetchSales = async () => {
+      setLoading(true);
+      const params = new URLSearchParams({
+        page: pagination.page.toString(),
+        limit: pagination.limit.toString(),
+        search,
+        ...(status && { status }),
+        ...(paymentMethod && { paymentMethod }),
+        ...(dateRange.from && { startDate: dateRange.from.toISOString() }),
+        ...(dateRange.to && { endDate: dateRange.to.toISOString() }),
+      });
       try {
-        const res = await fetch(`/api/sales/${saleId}`);
+        const res = await fetch(`/api/sales?${params}`);
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-        setSale(data);
+        setSales(data.sales || []);
+        setPagination(data.pagination || { page: 1, limit: 10, total: 0, pages: 0 });
       } catch (error) {
-        console.error(error);
+        console.error("Failed to fetch sales", error);
       } finally {
         setLoading(false);
       }
     };
-    fetchSale();
-  }, [saleId]);
+    fetchSales();
+  }, [pagination.page, search, status, paymentMethod, dateRange]);
 
-  if (loading) {
-    return (
-      <>
-        <Header title="Sale Details" />
-        <div className="p-6 text-center">Loading...</div>
-      </>
-    );
-  }
-
-  if (!sale) {
-    return (
-      <>
-        <Header title="Sale Details" />
-        <div className="p-6 text-center">Sale not found</div>
-      </>
-    );
-  }
+  const clearFilters = () => {
+    setSearch("");
+    setStatus("");
+    setPaymentMethod("");
+    setDateRange({ from: addDays(new Date(), -30), to: new Date() });
+    setPagination(prev => ({ ...prev, page: 1 }));
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -65,118 +88,145 @@ export default function SaleDetailPage() {
 
   return (
     <>
-      <Header title={`Sale ${sale.invoiceNumber}`} />
-      <div className="p-6 space-y-6">
-        <Button variant="ghost" onClick={() => router.back()}>
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back
-        </Button>
-
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Sale Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Invoice:</span>
-                <span className="font-medium">{sale.invoiceNumber}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Date:</span>
-                <span>{formatDateTime(sale.createdAt)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Status:</span>
-                <span>{getStatusBadge(sale.status)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Payment Method:</span>
-                <span>{sale.paymentMethod}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Cashier:</span>
-                <span>{sale.user?.name}</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Customer Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Name:</span>
-                <span>{sale.customerName || "Guest"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Phone:</span>
-                <span>{sale.customerPhone || "—"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Email:</span>
-                <span>{sale.customerEmail || "—"}</span>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
+      <Header 
+        title="Sales" 
+        subtitle="Manage your sales transactions"
+        actions={
+          <Button asChild>
+            <Link href="/dashboard/sales/new">
+              <Plus className="mr-2 h-4 w-4" />
+              New Sale
+            </Link>
+          </Button>
+        }
+      />
+      <div className="p-6 space-y-4">
+        {/* Filters */}
         <Card>
-          <CardHeader>
-            <CardTitle>Items</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Drug</TableHead>
-                  <TableHead>Quantity</TableHead>
-                  <TableHead>Unit Price</TableHead>
-                  <TableHead>Discount</TableHead>
-                  <TableHead>Subtotal</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sale.saleItems?.map((item: any) => (
-                  <TableRow key={item.id}>
-                    <TableCell>{item.drug?.name}</TableCell>
-                    <TableCell>{item.quantity}</TableCell>
-                    <TableCell>{formatCurrency(item.unitPrice)}</TableCell>
-                    <TableCell>{formatCurrency(item.discount)}</TableCell>
-                    <TableCell>{formatCurrency(item.subtotal)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Totals</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2 max-w-sm">
-              <div className="flex justify-between">
-                <span>Subtotal:</span>
-                <span>{formatCurrency(sale.totalAmount + sale.discount - sale.tax)}</span>
+          <CardContent className="p-4">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              <div className="space-y-2">
+                <Label>Search</Label>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Invoice, customer..."
+                    className="pl-8"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span>Discount:</span>
-                <span>-{formatCurrency(sale.discount)}</span>
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">All</SelectItem>
+                    <SelectItem value="COMPLETED">Completed</SelectItem>
+                    <SelectItem value="PENDING">Pending</SelectItem>
+                    <SelectItem value="CANCELLED">Cancelled</SelectItem>
+                    <SelectItem value="REFUNDED">Refunded</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <div className="flex justify-between">
-                <span>Tax:</span>
-                <span>+{formatCurrency(sale.tax)}</span>
+              <div className="space-y-2">
+                <Label>Payment Method</Label>
+                <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Methods" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">All</SelectItem>
+                    <SelectItem value="CASH">Cash</SelectItem>
+                    <SelectItem value="CARD">Card</SelectItem>
+                    <SelectItem value="CHAPA">Chapa</SelectItem>
+                    <SelectItem value="INSURANCE">Insurance</SelectItem>
+                    <SelectItem value="MIXED">Mixed</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <div className="flex justify-between font-bold text-lg border-t pt-2">
-                <span>Total:</span>
-                <span>{formatCurrency(sale.netAmount)}</span>
+              <div className="space-y-2">
+                <Label>Date Range</Label>
+                <DatePickerWithRange date={dateRange} setDate={setDateRange} />
               </div>
+            </div>
+            <div className="flex justify-end mt-4">
+              <Button variant="outline" size="sm" onClick={clearFilters}>
+                Clear Filters
+              </Button>
             </div>
           </CardContent>
         </Card>
+
+        {/* Table */}
+        <Card>
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="p-8 text-center">Loading...</div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Invoice</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Customer</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Payment</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sales.map((sale) => (
+                    <TableRow key={sale.id}>
+                      <TableCell className="font-medium">{sale.invoiceNumber}</TableCell>
+                      <TableCell>{formatDate(sale.createdAt)}</TableCell>
+                      <TableCell>{sale.customerName || "Guest"}</TableCell>
+                      <TableCell>{formatCurrency(sale.netAmount)}</TableCell>
+                      <TableCell>{sale.paymentMethod}</TableCell>
+                      <TableCell>{getStatusBadge(sale.status)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="icon" asChild>
+                          <Link href={`/dashboard/sales/${sale.id}`}>
+                            <Eye className="h-4 w-4" />
+                          </Link>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Pagination */}
+        {pagination.pages > 1 && (
+          <div className="flex justify-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pagination.page === 1}
+              onClick={() => setPagination(prev => ({ ...prev, page: prev.page - 1 }))}
+            >
+              Previous
+            </Button>
+            <span className="py-2 px-4 text-sm">
+              Page {pagination.page} of {pagination.pages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pagination.page === pagination.pages}
+              onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
+            >
+              Next
+            </Button>
+          </div>
+        )}
       </div>
     </>
   );

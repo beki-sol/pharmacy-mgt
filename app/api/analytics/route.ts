@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-
 import { prisma } from "@/app/lib/prisma";
-import { auth } from "@/app/lib/auth";
-import { startOfDay, endOfDay, subDays, subMonths, format } from "date-fns";
-
+import { startOfDay, endOfDay, subDays, subMonths } from "date-fns";
 
 type CustomerMetrics = {
   unique_customers: number | null;
@@ -13,23 +10,30 @@ type CustomerMetrics = {
   min_transaction_value: number | null;
 };
 
+function convertBigInts(obj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'bigint') return Number(obj);
+  if (Array.isArray(obj)) return obj.map(item => convertBigInts(item));
+  if (typeof obj === 'object') {
+    const result: any = {};
+    for (const key in obj) {
+      result[key] = convertBigInts(obj[key]);
+    }
+    return result;
+  }
+  return obj;
+}
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth();
-    
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { searchParams } = new URL(request.url);
     const period = searchParams.get("period") || "month";
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
-    
+
     let dateFilter: any = {};
     const now = new Date();
-    
+
     if (startDate && endDate) {
       dateFilter = {
         gte: new Date(startDate),
@@ -64,7 +68,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Get sales summary
+    // Sales summary
     const salesSummary = await prisma.sale.aggregate({
       where: {
         createdAt: dateFilter,
@@ -79,7 +83,7 @@ export async function GET(request: NextRequest) {
       _count: true,
     });
 
-    // Get daily sales trend
+    // Daily sales trend
     const salesTrend = await prisma.$queryRaw`
       SELECT 
         DATE("createdAt") as date,
@@ -95,30 +99,30 @@ export async function GET(request: NextRequest) {
       ORDER BY date ASC
     `;
 
-    // Get top selling drugs
+    // Top selling drugs
     const topDrugs = await prisma.$queryRaw`
       SELECT 
         d.id,
         d.name,
-        d.genericName,
-        d.brand,
+        d."genericName",
+        d."brand",
         d.category,
         COUNT(si.id) as times_sold,
         SUM(si.quantity) as total_quantity,
         SUM(si.subtotal) as total_revenue,
-        AVG(si.unitPrice) as avg_price
+        AVG(si."unitPrice") as avg_price
       FROM "Drug" d
       JOIN "SaleItem" si ON d.id = si."drugId"
       JOIN "Sale" s ON si."saleId" = s.id
       WHERE s."createdAt" >= ${dateFilter.gte}
         AND s."createdAt" <= ${dateFilter.lte}
         AND s."status" = 'COMPLETED'
-      GROUP BY d.id, d.name, d.genericName, d.brand, d.category
+      GROUP BY d.id, d.name, d."genericName", d."brand", d.category
       ORDER BY total_quantity DESC
       LIMIT 20
     `;
 
-    // Get top performing staff
+    // Top performing staff
     const topStaff = await prisma.$queryRaw`
       SELECT 
         u.id,
@@ -138,7 +142,7 @@ export async function GET(request: NextRequest) {
       LIMIT 10
     `;
 
-    // Get inventory status
+    // Inventory status
     const inventoryStatus = await prisma.$queryRaw`
       SELECT 
         category,
@@ -153,7 +157,7 @@ export async function GET(request: NextRequest) {
       ORDER BY category
     `;
 
-    // Get sales by payment method
+    // Sales by payment method
     const salesByPayment = await prisma.$queryRaw`
       SELECT 
         "paymentMethod",
@@ -168,7 +172,7 @@ export async function GET(request: NextRequest) {
       ORDER BY total_amount DESC
     `;
 
-    // Get customer metrics
+    // Customer metrics
     const customerMetrics = await prisma.$queryRaw<CustomerMetrics[]>`
       SELECT 
         COUNT(DISTINCT "customerPhone") as unique_customers,
@@ -181,15 +185,15 @@ export async function GET(request: NextRequest) {
         AND "createdAt" <= ${dateFilter.lte}
         AND "status" = 'COMPLETED'
     `;
-    
-    // Get drug category performance
+
+    // Category performance
     const categoryPerformance = await prisma.$queryRaw`
       SELECT 
         d.category,
         COUNT(si.id) as transactions,
         SUM(si.quantity) as quantity_sold,
         SUM(si.subtotal) as revenue,
-        AVG(si.unitPrice) as avg_price
+        AVG(si."unitPrice") as avg_price
       FROM "Drug" d
       JOIN "SaleItem" si ON d.id = si."drugId"
       JOIN "Sale" s ON si."saleId" = s.id
@@ -200,7 +204,7 @@ export async function GET(request: NextRequest) {
       ORDER BY revenue DESC
     `;
 
-    // Get profit margin analysis
+    // Profit analysis
     const profitAnalysis = await prisma.$queryRaw`
       SELECT 
         d.id,
@@ -210,7 +214,7 @@ export async function GET(request: NextRequest) {
         SUM(si.subtotal) as revenue,
         SUM(si.quantity * d."costPrice") as cost,
         SUM(si.subtotal - (si.quantity * d."costPrice")) as profit,
-        (SUM(si.subtotal - (si.quantity * d."costPrice")) / SUM(si.subtotal)) * 100 as profit_margin
+        (SUM(si.subtotal - (si.quantity * d."costPrice")) / NULLIF(SUM(si.subtotal), 0)) * 100 as profit_margin
       FROM "Drug" d
       JOIN "SaleItem" si ON d.id = si."drugId"
       JOIN "Sale" s ON si."saleId" = s.id
@@ -223,7 +227,7 @@ export async function GET(request: NextRequest) {
       LIMIT 15
     `;
 
-    // Get hourly sales pattern
+    // Hourly pattern
     const hourlyPattern = await prisma.$queryRaw`
       SELECT 
         EXTRACT(HOUR FROM "createdAt") as hour,
@@ -237,7 +241,7 @@ export async function GET(request: NextRequest) {
       ORDER BY hour
     `;
 
-    return NextResponse.json({
+    const responseData = {
       summary: {
         totalSales: salesSummary._sum.totalAmount || 0,
         totalDiscount: salesSummary._sum.discount || 0,
@@ -254,7 +258,9 @@ export async function GET(request: NextRequest) {
       categoryPerformance,
       profitAnalysis,
       hourlyPattern,
-    });
+    };
+
+    return NextResponse.json(convertBigInts(responseData));
   } catch (error: any) {
     console.error("Analytics error:", error);
     return NextResponse.json(

@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -23,21 +22,19 @@ import {
   SelectValue,
 } from "@/app/components/ui/Select";
 import { Label } from "@/app/components/ui/Label";
-import { Plus, Search, Edit, Trash, Eye } from "lucide-react";
+import { Plus, Search, Eye, Edit, Trash } from "lucide-react";
 import Link from "next/link";
-import { formatCurrency, formatDate } from "@/app/lib/utils";
+import { formatCurrency } from "@/app/lib/utils";
 
 interface Drug {
   id: string;
   name: string;
   genericName: string | null;
-  brand: string | null;
   category: string;
   stock: number;
   price: number;
   minStockLevel: number;
   expiryDate: string | null;
-  supplier?: { name: string };
 }
 
 export default function DrugsPage() {
@@ -67,7 +64,7 @@ export default function DrugsPage() {
         sortOrder,
       });
       try {
-        const res = await fetch(`/api/drugs?${params}`);
+        const res = await fetch(`/api/drug?${params}`);
         const data = await res.json();
         setDrugs(data.drugs || []);
         setPagination(data.pagination || { page: 1, limit: 10, total: 0, pages: 0 });
@@ -244,7 +241,7 @@ export default function DrugsPage() {
                       <TableCell>{formatCurrency(drug.price)}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          {drug.expiryDate ? formatDate(drug.expiryDate) : "—"}
+                          {drug.expiryDate ? new Date(drug.expiryDate).toLocaleDateString() : "—"}
                           {getExpiryStatus(drug.expiryDate)}
                         </div>
                       </TableCell>
