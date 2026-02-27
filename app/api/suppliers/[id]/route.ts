@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { auth } from "@/app/lib/auth";
-import { headers } from "next/headers"
 import { z } from "zod";
 
 const supplierUpdateSchema = z.object({
@@ -24,12 +22,6 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { id } = params;
 
     const supplier = await prisma.supplier.findUnique({
@@ -88,20 +80,6 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check permissions
-    if (!["ADMIN", "MANAGER", "INVENTORY_MANAGER"].includes(session.user.role)) {
-      return NextResponse.json(
-        { error: "Insufficient permissions" },
-        { status: 403 }
-      );
-    }
-
     const { id } = params;
     const body = await request.json();
 
@@ -119,26 +97,9 @@ export async function PATCH(
       return NextResponse.json({ error: "Supplier not found" }, { status: 404 });
     }
 
-    const updatedSupplier = await prisma.$transaction(async (tx: any) => {
-      const supplier = await tx.supplier.update({
-        where: { id },
-        data,
-      });
-
-      await tx.auditLog.create({
-        data: {
-          userId: session.user.id,
-          action: "UPDATE",
-          entity: "Supplier",
-          entityId: id,
-          oldData: existingSupplier,
-          newData: supplier,
-          ipAddress: request.headers.get("x-forwarded-for") || "unknown",
-          userAgent: request.headers.get("user-agent") || "unknown",
-        },
-      });
-
-      return supplier;
+    const updatedSupplier = await prisma.supplier.update({
+      where: { id },
+      data,
     });
 
     return NextResponse.json(updatedSupplier);
@@ -164,20 +125,6 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Only admin can delete suppliers
-    if (session.user.role !== "ADMIN") {
-      return NextResponse.json(
-        { error: "Only administrators can delete suppliers" },
-        { status: 403 }
-      );
-    }
-
     const { id } = params;
 
     const supplier = await prisma.supplier.findUnique({
@@ -201,39 +148,13 @@ export async function DELETE(
         data: { isActive: false },
       });
 
-      await prisma.auditLog.create({
-        data: {
-          userId: session.user.id,
-          action: "DEACTIVATE",
-          entity: "Supplier",
-          entityId: id,
-          oldData: supplier,
-          ipAddress: request.headers.get("x-forwarded-for") || "unknown",
-          userAgent: request.headers.get("user-agent") || "unknown",
-        },
-      });
-
       return NextResponse.json({
         message: "Supplier has been deactivated because it has associated records",
       });
     }
 
     // Hard delete if no associations
-    await prisma.$transaction(async (tx: any) => {
-      await tx.supplier.delete({ where: { id } });
-
-      await tx.auditLog.create({
-        data: {
-          userId: session.user.id,
-          action: "DELETE",
-          entity: "Supplier",
-          entityId: id,
-          oldData: supplier,
-          ipAddress: request.headers.get("x-forwarded-for") || "unknown",
-          userAgent: request.headers.get("user-agent") || "unknown",
-        },
-      });
-    });
+    await prisma.supplier.delete({ where: { id } });
 
     return NextResponse.json({ message: "Supplier deleted successfully" });
   } catch (error: any) {

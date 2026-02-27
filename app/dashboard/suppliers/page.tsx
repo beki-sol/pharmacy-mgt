@@ -23,15 +23,6 @@ import {
 } from "@/app/components/ui/Select";
 import { Label } from "@/app/components/ui/Label";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/app/components/ui/dialog";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -97,7 +88,8 @@ export default function SuppliersPage() {
       sortOrder,
     });
     try {
-      const res = await fetch(`/api/suppliers?${params}`);
+      // Updated endpoint: /api/supplier (singular)
+      const res = await fetch(`/api/supplier?${params}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch");
       setSuppliers(data.suppliers || []);
@@ -132,7 +124,8 @@ export default function SuppliersPage() {
     if (!supplierToDelete) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/suppliers/${supplierToDelete.id}`, {
+      // Updated endpoint: /api/supplier/{id}
+      const res = await fetch(`/api/supplier/${supplierToDelete.id}`, {
         method: "DELETE",
       });
       if (!res.ok) {
@@ -162,6 +155,7 @@ export default function SuppliersPage() {
         subtitle="Manage your suppliers and vendors"
         actions={
           <Button asChild>
+            {/* This link points to the new supplier form – that page should use POST /api/supplier */}
             <Link href="/dashboard/suppliers/new">
               <Plus className="mr-2 h-4 w-4" />
               Add Supplier

@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { auth } from "@/app/lib/auth";
-import { headers } from "next/headers"
 import { z } from "zod";
 
 const supplierSchema = z.object({
@@ -20,12 +18,6 @@ const supplierSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth();
-    
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
@@ -84,20 +76,6 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await auth();
-    
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check permissions
-    if (!["ADMIN", "MANAGER", "INVENTORY_MANAGER"].includes(session.user.role)) {
-      return NextResponse.json(
-        { error: "Insufficient permissions" },
-        { status: 403 }
-      );
-    }
-
     const body = await request.json();
     const data = supplierSchema.parse({
       ...body,
@@ -105,27 +83,11 @@ export async function POST(request: NextRequest) {
       rating: body.rating ? parseInt(body.rating) : undefined,
     });
 
-    const supplier = await prisma.$transaction(async (tx: any) => {
-      const newSupplier = await tx.supplier.create({
-        data: {
-          ...data,
-          balance: 0,
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          userId: session.user.id,
-          action: "CREATE",
-          entity: "Supplier",
-          entityId: newSupplier.id,
-          newData: newSupplier,
-          ipAddress: request.headers.get("x-forwarded-for") || "unknown",
-          userAgent: request.headers.get("user-agent") || "unknown",
-        },
-      });
-
-      return newSupplier;
+    const supplier = await prisma.supplier.create({
+      data: {
+        ...data,
+        balance: 0,
+      },
     });
 
     return NextResponse.json(supplier, { status: 201 });

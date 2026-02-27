@@ -248,7 +248,7 @@ export default function DrugsPage() {
                       <TableCell>{getStockStatusBadge(drug.stock, drug.minStockLevel)}</TableCell>
                       <TableCell className="text-right">
                         <Button variant="ghost" size="icon" asChild>
-                          <Link href={`/dashboard/drugs/${drug.id}`}>
+                          <Link href={`/dashboard/drug/${drug.id}`}>
                             <Eye className="h-4 w-4" />
                           </Link>
                         </Button>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/Select";
-import { CalendarIcon, Loader2 } from "lucide-react";
+import { CalendarIcon, Loader2, AlertTriangle } from "lucide-react";
 import { Calendar } from "@/app/components/ui/Calendar";
 import {
   Popover,
@@ -35,8 +35,8 @@ import {
 import { cn } from "@/app/lib/utils";
 import { format } from "date-fns";
 import toast from "react-hot-toast";
+import { Switch } from "@/app/components/ui/Switch";
 
-// Schema matching the API's drugSchema, but with batch fields included
 const drugFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   genericName: z.string().optional(),
@@ -65,6 +65,7 @@ const drugFormSchema = z.object({
   description: z.string().optional(),
   sideEffects: z.string().optional(),
   storageCondition: z.string().optional(),
+  isActive: z.boolean().optional(),
 });
 
 type DrugFormData = z.infer<typeof drugFormSchema>;
@@ -74,78 +75,110 @@ interface Supplier {
   name: string;
 }
 
-export default function NewDrugPage() {
+export default function EditDrugPage() {
+  const params = useParams();
   const router = useRouter();
+  const id = params.id as string;
+
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [fetchingSuppliers, setFetchingSuppliers] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
     setValue,
     watch,
+    reset,
     formState: { errors },
   } = useForm<DrugFormData>({
     resolver: zodResolver(drugFormSchema),
-    defaultValues: {
-      category: "PRESCRIPTION",
-      stock: 0,
-      minStockLevel: 10,
-      maxStockLevel: 100,
-      reorderPoint: 20,
-    },
   });
 
   const expiryDate = watch("expiryDate");
+  const isActive = watch("isActive");
 
-  // Fetch suppliers for dropdown
+  // Fetch drug data and suppliers
   useEffect(() => {
-    const fetchSuppliers = async () => {
+    const fetchData = async () => {
       try {
-        const res = await fetch("/api/suppliers?limit=100");
-        const data = await res.json();
-        setSuppliers(data.suppliers || []);
-      } catch (error) {
-        console.error("Failed to load suppliers", error);
-        toast.error("Could not load suppliers");
+        const [drugRes, suppliersRes] = await Promise.all([
+          fetch(`/api/drug/${id}`),
+          fetch("/api/supplier?limit=100"),
+        ]);
+
+        if (!drugRes.ok) {
+          if (drugRes.status === 404) throw new Error("Drug not found");
+          throw new Error("Failed to load drug");
+        }
+        const drug = await drugRes.json();
+
+        const suppliersData = await suppliersRes.json();
+        setSuppliers(suppliersData.suppliers || []);
+
+        // Pre‑fill form with existing data
+        reset({
+          name: drug.name,
+          genericName: drug.genericName || "",
+          brand: drug.brand || "",
+          category: drug.category,
+          dosage: drug.dosage,
+          unit: drug.unit,
+          price: drug.price,
+          costPrice: drug.costPrice,
+          stock: drug.stock,
+          minStockLevel: drug.minStockLevel,
+          maxStockLevel: drug.maxStockLevel,
+          reorderPoint: drug.reorderPoint,
+          expiryDate: drug.expiryDate ? new Date(drug.expiryDate) : undefined,
+          batchNumber: drug.batchNumber || "",
+          supplierId: drug.supplierId || "",
+          barcode: drug.barcode || "",
+          description: drug.description || "",
+          sideEffects: drug.sideEffects || "",
+          storageCondition: drug.storageCondition || "",
+          isActive: drug.isActive,
+        });
+      } catch (err: any) {
+        setError(err.message);
+        toast.error(err.message);
       } finally {
-        setFetchingSuppliers(false);
+        setLoading(false);
       }
     };
-    fetchSuppliers();
-  }, []);
+    fetchData();
+  }, [id, reset]);
 
   const onSubmit = async (data: DrugFormData) => {
-    setLoading(true);
+    setSaving(true);
     try {
-      // Convert date to ISO string for API
       const payload = {
         ...data,
         expiryDate: data.expiryDate ? data.expiryDate.toISOString() : undefined,
       };
-      const res = await fetch("/api/drug", {
-        method: "POST",
+      const res = await fetch(`/api/drug/${id}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const result = await res.json();
       if (!res.ok) {
-        throw new Error(result.error || "Failed to create drug");
+        throw new Error(result.error || "Failed to update drug");
       }
-      toast.success("Drug added successfully");
-      router.push("/dashboard/drugs");
+      toast.success("Drug updated successfully");
+      router.push(`/dashboard/drugs/${id}`);
     } catch (error: any) {
       toast.error(error.message);
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  if (fetchingSuppliers) {
+  if (loading) {
     return (
       <>
-        <Header title="Add Drug" />
+        <Header title="Edit Drug" />
         <div className="p-6 flex justify-center">
           <Loader2 className="h-8 w-8 animate-spin" />
         </div>
@@ -153,15 +186,30 @@ export default function NewDrugPage() {
     );
   }
 
+  if (error) {
+    return (
+      <>
+        <Header title="Error" />
+        <div className="p-6 text-center text-destructive">
+          <AlertTriangle className="h-12 w-12 mx-auto mb-4" />
+          <p>{error}</p>
+          <Button className="mt-4" onClick={() => router.back()}>
+            Go Back
+          </Button>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
-      <Header title="Add New Drug" subtitle="Create a new drug record" />
+      <Header title="Edit Drug" subtitle="Update drug information" />
       <div className="p-6 max-w-4xl mx-auto">
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle>Basic Information</CardTitle>
-              <CardDescription>Enter the drug's details</CardDescription>
+              <CardDescription>Edit the drug's details</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
@@ -183,7 +231,7 @@ export default function NewDrugPage() {
                 <Label htmlFor="category">Category *</Label>
                 <Select
                   onValueChange={(value: any) => setValue("category", value)}
-                  defaultValue="PRESCRIPTION"
+                  defaultValue={watch("category")}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select category" />
@@ -222,7 +270,7 @@ export default function NewDrugPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="supplierId">Supplier</Label>
-                <Select onValueChange={(value) => setValue("supplierId", value)}>
+                <Select onValueChange={(value) => setValue("supplierId", value)} defaultValue={watch("supplierId")}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select supplier" />
                   </SelectTrigger>
@@ -241,7 +289,7 @@ export default function NewDrugPage() {
           <Card>
             <CardHeader>
               <CardTitle>Pricing & Stock</CardTitle>
-              <CardDescription>Set pricing and stock levels</CardDescription>
+              <CardDescription>Adjust pricing and stock levels</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
               <div className="space-y-2">
@@ -269,7 +317,7 @@ export default function NewDrugPage() {
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="stock">Initial Stock *</Label>
+                <Label htmlFor="stock">Current Stock *</Label>
                 <Input
                   id="stock"
                   type="number"
@@ -318,7 +366,7 @@ export default function NewDrugPage() {
           <Card>
             <CardHeader>
               <CardTitle>Batch Information</CardTitle>
-              <CardDescription>Initial batch details (optional)</CardDescription>
+              <CardDescription>Update batch details (optional)</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
               <div className="space-y-2">
@@ -370,6 +418,14 @@ export default function NewDrugPage() {
                 <Label htmlFor="storageCondition">Storage Conditions</Label>
                 <Input id="storageCondition" {...register("storageCondition")} />
               </div>
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="isActive"
+                  checked={isActive}
+                  onCheckedChange={(checked) => setValue("isActive", checked)}
+                />
+                <Label htmlFor="isActive">Active (visible in lists)</Label>
+              </div>
             </CardContent>
             <CardFooter className="flex justify-end gap-2">
               <Button
@@ -379,9 +435,9 @@ export default function NewDrugPage() {
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={loading}>
-                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Save Drug
+              <Button type="submit" disabled={saving}>
+                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save Changes
               </Button>
             </CardFooter>
           </Card>

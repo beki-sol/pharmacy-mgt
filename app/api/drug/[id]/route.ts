@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { auth } from "@/app/lib/auth";
-import { headers } from "next/headers"
 import { z } from "zod";
 
 const drugUpdateSchema = z.object({
@@ -40,12 +38,6 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { id } = params;
 
     const drug = await prisma.drug.findUnique({
@@ -80,20 +72,6 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check permissions
-    if (!["ADMIN", "PHARMACIST", "INVENTORY_MANAGER"].includes(session.user.role)) {
-      return NextResponse.json(
-        { error: "Insufficient permissions" },
-        { status: 403 }
-      );
-    }
-
     const { id } = params;
     const body = await request.json();
 
@@ -130,31 +108,13 @@ export async function PATCH(
       }
     }
 
-    // Update drug
-    const updatedDrug = await prisma.$transaction(async (tx: any) => {
-      const drug = await tx.drug.update({
-        where: { id },
-        data: {
-          ...data,
-          expiryDate: data.expiryDate ? new Date(data.expiryDate) : undefined,
-        },
-      });
-
-      // Create audit log
-      await tx.auditLog.create({
-        data: {
-          userId: session.user.id,
-          action: "UPDATE",
-          entity: "Drug",
-          entityId: id,
-          oldData: existingDrug,
-          newData: drug,
-          ipAddress: request.headers.get("x-forwarded-for") || "unknown",
-          userAgent: request.headers.get("user-agent") || "unknown",
-        },
-      });
-
-      return drug;
+    // Update drug (audit log removed)
+    const updatedDrug = await prisma.drug.update({
+      where: { id },
+      data: {
+        ...data,
+        expiryDate: data.expiryDate ? new Date(data.expiryDate) : undefined,
+      },
     });
 
     return NextResponse.json(updatedDrug);
@@ -180,20 +140,6 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await auth();
-    
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Only admin can delete drugs
-    if (session.user.role !== "ADMIN") {
-      return NextResponse.json(
-        { error: "Only administrators can delete drugs" },
-        { status: 403 }
-      );
-    }
-
     const { id } = params;
 
     // Check if drug exists
@@ -218,18 +164,6 @@ export async function DELETE(
         data: { isActive: false },
       });
 
-      await prisma.auditLog.create({
-        data: {
-          userId: session.user.id,
-          action: "DEACTIVATE",
-          entity: "Drug",
-          entityId: id,
-          oldData: drug,
-          ipAddress: request.headers.get("x-forwarded-for") || "unknown",
-          userAgent: request.headers.get("user-agent") || "unknown",
-        },
-      });
-
       return NextResponse.json({
         message: "Drug has been deactivated because it has associated transactions",
       });
@@ -239,22 +173,8 @@ export async function DELETE(
     await prisma.$transaction(async (tx: any) => {
       // Delete related batches
       await tx.drugBatch.deleteMany({ where: { drugId: id } });
-      
       // Delete drug
       await tx.drug.delete({ where: { id } });
-
-      // Create audit log
-      await tx.auditLog.create({
-        data: {
-          userId: session.user.id,
-          action: "DELETE",
-          entity: "Drug",
-          entityId: id,
-          oldData: drug,
-          ipAddress: request.headers.get("x-forwarded-for") || "unknown",
-          userAgent: request.headers.get("user-agent") || "unknown",
-        },
-      });
     });
 
     return NextResponse.json({ message: "Drug deleted successfully" });

@@ -6,10 +6,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/Ca
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/app/components/ui/Table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/app/components/ui/Select";
 import { formatCurrency } from "@/app/lib/utils";
+import {
+  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+} from "recharts";
 
 const formatNumber = (value: number): string => {
   return new Intl.NumberFormat().format(value);
 };
+
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
 
 interface AnalyticsData {
   summary: {
@@ -105,10 +111,42 @@ export default function AnalyticsPage() {
   if (loading) return <div className="p-8 text-center">Loading analytics...</div>;
   if (!data) return <div className="p-8 text-center text-destructive">Failed to load analytics</div>;
 
+  // Prepare data for charts
+  const salesTrendData = data.salesTrend.map(item => ({
+    date: new Date(item.date).toLocaleDateString(),
+    total: item.total_sales,
+    net: item.net_sales,
+    transactions: item.transactions,
+  }));
+
+  const topDrugsData = data.topDrugs.slice(0, 10).map(drug => ({
+    name: drug.name.length > 20 ? drug.name.substring(0, 20) + '…' : drug.name,
+    quantity: drug.total_quantity,
+    revenue: drug.total_revenue,
+  }));
+
+  const paymentData = data.salesByPayment.map(pm => ({
+    name: pm.paymentMethod,
+    value: pm.total_amount,
+  }));
+
+  const hourlyData = data.hourlyPattern.map(h => ({
+    hour: `${h.hour}:00`,
+    sales: h.total_sales,
+    transactions: h.transactions,
+  }));
+
+  const categoryData = data.categoryPerformance.map(cat => ({
+    name: cat.category.replace(/_/g, ' '),
+    revenue: cat.revenue,
+    quantity: cat.quantity_sold,
+  }));
+
   return (
     <>
       <Header title="Analytics" subtitle="Business performance insights" />
       <div className="p-6 space-y-6">
+        {/* Period Selector */}
         <div className="flex justify-end">
           <Select value={period} onValueChange={setPeriod}>
             <SelectTrigger className="w-[180px]">
@@ -123,6 +161,7 @@ export default function AnalyticsPage() {
           </Select>
         </div>
 
+        {/* Summary Cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardHeader className="pb-2">
@@ -164,66 +203,97 @@ export default function AnalyticsPage() {
           </Card>
         </div>
 
+        {/* Sales Trend Chart */}
         <Card>
           <CardHeader>
             <CardTitle>Daily Sales Trend</CardTitle>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Transactions</TableHead>
-                  <TableHead className="text-right">Total Sales</TableHead>
-                  <TableHead className="text-right">Net Sales</TableHead>
-                  <TableHead className="text-right">Avg Ticket</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.salesTrend.map((row, idx) => (
-                  <TableRow key={idx}>
-                    <TableCell>{new Date(row.date).toLocaleDateString()}</TableCell>
-                    <TableCell className="text-right">{formatNumber(row.transactions)}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(row.total_sales)}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(row.net_sales)}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(row.avg_ticket)}</TableCell>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={salesTrendData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis yAxisId="left" orientation="left" stroke="#8884d8" />
+                <YAxis yAxisId="right" orientation="right" stroke="#82ca9d" />
+                <Tooltip formatter={(value) => formatCurrency(value as number)} />
+                <Legend />
+                <Line yAxisId="left" type="monotone" dataKey="total" stroke="#8884d8" name="Total Sales" />
+                <Line yAxisId="right" type="monotone" dataKey="net" stroke="#82ca9d" name="Net Sales" />
+              </LineChart>
+            </ResponsiveContainer>
+            {/* Original table */}
+            <div className="mt-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Transactions</TableHead>
+                    <TableHead className="text-right">Total Sales</TableHead>
+                    <TableHead className="text-right">Net Sales</TableHead>
+                    <TableHead className="text-right">Avg Ticket</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {data.salesTrend.map((row, idx) => (
+                    <TableRow key={idx}>
+                      <TableCell>{new Date(row.date).toLocaleDateString()}</TableCell>
+                      <TableCell className="text-right">{formatNumber(row.transactions)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(row.total_sales)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(row.net_sales)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(row.avg_ticket)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </CardContent>
         </Card>
 
+        {/* Two‑column layout for charts + tables */}
         <div className="grid gap-6 lg:grid-cols-2">
+          {/* Top Drugs Chart + Table */}
           <Card>
             <CardHeader>
               <CardTitle>Top Selling Drugs</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead className="text-right">Qty Sold</TableHead>
-                    <TableHead className="text-right">Revenue</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.topDrugs.map((drug) => (
-                    <TableRow key={drug.id}>
-                      <TableCell>
-                        {drug.name}
-                        {drug.genericName && <span className="text-xs text-muted-foreground ml-1">({drug.genericName})</span>}
-                      </TableCell>
-                      <TableCell className="text-right">{formatNumber(drug.total_quantity)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(drug.total_revenue)}</TableCell>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={topDrugsData} layout="vertical" margin={{ left: 40 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" />
+                  <YAxis dataKey="name" type="category" width={150} />
+                  <Tooltip formatter={(value) => formatNumber(value as number)} />
+                  <Legend />
+                  <Bar dataKey="quantity" fill="#8884d8" name="Quantity Sold" />
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-4">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead className="text-right">Qty Sold</TableHead>
+                      <TableHead className="text-right">Revenue</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {data.topDrugs.map((drug) => (
+                      <TableRow key={drug.id}>
+                        <TableCell>
+                          {drug.name}
+                          {drug.genericName && <span className="text-xs text-muted-foreground ml-1">({drug.genericName})</span>}
+                        </TableCell>
+                        <TableCell className="text-right">{formatNumber(drug.total_quantity)}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(drug.total_revenue)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
 
+          {/* Top Staff Table (no chart for staff) */}
           <Card>
             <CardHeader>
               <CardTitle>Top Performing Staff</CardTitle>
@@ -252,6 +322,55 @@ export default function AnalyticsPage() {
             </CardContent>
           </Card>
 
+          {/* Sales by Payment Method Chart + Table */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Sales by Payment Method</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={250}>
+                <PieChart>
+                  <Pie
+                    data={paymentData}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={(entry) => entry.name}
+                    outerRadius={80}
+                    fill="#8884d8"
+                    dataKey="value"
+                  >
+                    {paymentData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value) => formatCurrency(value as number)} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="mt-4">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Method</TableHead>
+                      <TableHead className="text-right">Transactions</TableHead>
+                      <TableHead className="text-right">Total Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.salesByPayment.map((pm) => (
+                      <TableRow key={pm.paymentMethod}>
+                        <TableCell>{pm.paymentMethod}</TableCell>
+                        <TableCell className="text-right">{formatNumber(pm.transactions)}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(pm.total_amount)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Inventory Status Table (no chart) */}
           <Card>
             <CardHeader>
               <CardTitle>Inventory Status by Category</CardTitle>
@@ -284,32 +403,7 @@ export default function AnalyticsPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Sales by Payment Method</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Method</TableHead>
-                    <TableHead className="text-right">Transactions</TableHead>
-                    <TableHead className="text-right">Total Amount</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.salesByPayment.map((pm) => (
-                    <TableRow key={pm.paymentMethod}>
-                      <TableCell>{pm.paymentMethod}</TableCell>
-                      <TableCell className="text-right">{formatNumber(pm.transactions)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(pm.total_amount)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-
+          {/* Customer Metrics Card (no chart) */}
           <Card>
             <CardHeader>
               <CardTitle>Customer Metrics</CardTitle>
@@ -338,34 +432,52 @@ export default function AnalyticsPage() {
             </CardContent>
           </Card>
 
+          {/* Category Performance Chart + Table */}
           <Card>
             <CardHeader>
               <CardTitle>Category Performance</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Category</TableHead>
-                    <TableHead className="text-right">Transactions</TableHead>
-                    <TableHead className="text-right">Qty Sold</TableHead>
-                    <TableHead className="text-right">Revenue</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.categoryPerformance.map((cat) => (
-                    <TableRow key={cat.category}>
-                      <TableCell>{cat.category.replace(/_/g, " ")}</TableCell>
-                      <TableCell className="text-right">{formatNumber(cat.transactions)}</TableCell>
-                      <TableCell className="text-right">{formatNumber(cat.quantity_sold)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(cat.revenue)}</TableCell>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={categoryData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis yAxisId="left" orientation="left" stroke="#8884d8" />
+                  <YAxis yAxisId="right" orientation="right" stroke="#82ca9d" />
+                  <Tooltip formatter={(value, name) => 
+                    name === 'revenue' ? formatCurrency(value as number) : formatNumber(value as number)
+                  } />
+                  <Legend />
+                  <Bar yAxisId="left" dataKey="revenue" fill="#8884d8" name="Revenue" />
+                  <Bar yAxisId="right" dataKey="quantity" fill="#82ca9d" name="Quantity Sold" />
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-4">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Category</TableHead>
+                      <TableHead className="text-right">Transactions</TableHead>
+                      <TableHead className="text-right">Qty Sold</TableHead>
+                      <TableHead className="text-right">Revenue</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {data.categoryPerformance.map((cat) => (
+                      <TableRow key={cat.category}>
+                        <TableCell>{cat.category.replace(/_/g, " ")}</TableCell>
+                        <TableCell className="text-right">{formatNumber(cat.transactions)}</TableCell>
+                        <TableCell className="text-right">{formatNumber(cat.quantity_sold)}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(cat.revenue)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
 
+          {/* Profit Analysis Table (no chart) */}
           <Card className="lg:col-span-2">
             <CardHeader>
               <CardTitle>Top Profit Drugs</CardTitle>
@@ -402,29 +514,46 @@ export default function AnalyticsPage() {
             </CardContent>
           </Card>
 
+          {/* Hourly Pattern Chart + Table */}
           <Card>
             <CardHeader>
               <CardTitle>Hourly Sales Pattern</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Hour</TableHead>
-                    <TableHead className="text-right">Transactions</TableHead>
-                    <TableHead className="text-right">Total Sales</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.hourlyPattern.map((h) => (
-                    <TableRow key={h.hour}>
-                      <TableCell>{h.hour}:00</TableCell>
-                      <TableCell className="text-right">{formatNumber(h.transactions)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(h.total_sales)}</TableCell>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={hourlyData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="hour" />
+                  <YAxis yAxisId="left" orientation="left" stroke="#8884d8" />
+                  <YAxis yAxisId="right" orientation="right" stroke="#82ca9d" />
+                  <Tooltip formatter={(value, name) => 
+                    name === 'sales' ? formatCurrency(value as number) : formatNumber(value as number)
+                  } />
+                  <Legend />
+                  <Bar yAxisId="left" dataKey="sales" fill="#8884d8" name="Sales" />
+                  <Bar yAxisId="right" dataKey="transactions" fill="#82ca9d" name="Transactions" />
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-4">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Hour</TableHead>
+                      <TableHead className="text-right">Transactions</TableHead>
+                      <TableHead className="text-right">Total Sales</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {data.hourlyPattern.map((h) => (
+                      <TableRow key={h.hour}>
+                        <TableCell>{h.hour}:00</TableCell>
+                        <TableCell className="text-right">{formatNumber(h.transactions)}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(h.total_sales)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
         </div>
