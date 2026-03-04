@@ -89,7 +89,7 @@ export default function SuppliersPage() {
     });
     try {
       // Updated endpoint: /api/supplier (singular)
-      const res = await fetch(`/api/supplier?${params}`);
+      const res = await fetch(`/api/suppliers?${params}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch");
       setSuppliers(data.suppliers || []);
@@ -125,7 +125,7 @@ export default function SuppliersPage() {
     setDeleting(true);
     try {
       // Updated endpoint: /api/supplier/{id}
-      const res = await fetch(`/api/supplier/${supplierToDelete.id}`, {
+      const res = await fetch(`/api/suppliers/${supplierToDelete.id}`, {
         method: "DELETE",
       });
       if (!res.ok) {

@@ -35,10 +35,10 @@ const drugUpdateSchema = z.object({
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params; // ✅ Await the promise
 
     const drug = await prisma.drug.findUnique({
       where: { id },
@@ -69,10 +69,10 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params; // ✅ Await the promise
     const body = await request.json();
 
     // Parse and validate input
@@ -108,7 +108,7 @@ export async function PATCH(
       }
     }
 
-    // Update drug (audit log removed)
+    // Update drug
     const updatedDrug = await prisma.drug.update({
       where: { id },
       data: {
@@ -137,10 +137,10 @@ export async function PATCH(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params; // ✅ Await the promise
 
     // Check if drug exists
     const drug = await prisma.drug.findUnique({

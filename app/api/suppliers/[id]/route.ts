@@ -19,10 +19,10 @@ const supplierUpdateSchema = z.object({
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }>}
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
 
     const supplier = await prisma.supplier.findUnique({
       where: { id },
@@ -77,10 +77,10 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     const body = await request.json();
 
     const data = supplierUpdateSchema.parse({
@@ -122,10 +122,10 @@ export async function PATCH(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
 
     const supplier = await prisma.supplier.findUnique({
       where: { id },

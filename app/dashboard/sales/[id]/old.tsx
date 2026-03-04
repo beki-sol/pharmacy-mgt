@@ -1,3 +1,5 @@
+
+/*
 "use client";
 
 import { useEffect, useState } from "react";
@@ -6,25 +8,13 @@ import { Header } from "@/app/components/dashboard/Header";
 import { Button } from "@/app/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/Card";
 import { Badge } from "@/app/components/ui/Badge";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/app/components/ui/alert-dialog";
-import { Textarea } from "@/app/components/ui/Textarea";
-import { Label } from "@/app/components/ui/Label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/app/components/ui/Table";
 import { Separator } from "@/app/components/ui/Separator";
 import { formatCurrency, formatDate } from "@/app/lib/utils";
-import { ArrowLeft, Printer, RotateCcw, AlertTriangle, Loader2 } from "lucide-react";
+import { ArrowLeft, Printer, RotateCcw, AlertTriangle } from "lucide-react";
+import Link from "next/link";
 import toast from "react-hot-toast";
 
-// Types
 interface SaleItem {
   id: string;
   quantity: number;
@@ -33,7 +23,6 @@ interface SaleItem {
   tax: number;
   subtotal: number;
   drug: { name: string; genericName: string | null; unit: string };
-  batch?: { batchNumber: string; expiryDate: string };
 }
 
 interface Payment {
@@ -86,9 +75,6 @@ export default function SaleDetailPage() {
   const [sale, setSale] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [refundDialogOpen, setRefundDialogOpen] = useState(false);
-  const [refundReason, setRefundReason] = useState("");
-  const [refunding, setRefunding] = useState(false);
 
   useEffect(() => {
     const fetchSale = async () => {
@@ -117,29 +103,6 @@ export default function SaleDetailPage() {
       case "CANCELLED": return <Badge variant="destructive">Cancelled</Badge>;
       case "REFUNDED": return <Badge variant="secondary">Refunded</Badge>;
       default: return <Badge>{status}</Badge>;
-    }
-  };
-
-  const handleRefund = async () => {
-    setRefunding(true);
-    try {
-      const res = await fetch(`/api/sales/${id}/refund`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: refundReason }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Refund failed");
-      toast.success("Refund processed successfully");
-      setRefundDialogOpen(false);
-      // Refresh sale data
-      const updated = await fetch(`/api/sales/${id}`);
-      const updatedData = await updated.json();
-      setSale(updatedData);
-    } catch (error: any) {
-      toast.error(error.message);
-    } finally {
-      setRefunding(false);
     }
   };
 
@@ -189,7 +152,7 @@ export default function SaleDetailPage() {
               Print
             </Button>
             {sale.status === "COMPLETED" && (
-              <Button variant="destructive" onClick={() => setRefundDialogOpen(true)}>
+              <Button variant="destructive">
                 <RotateCcw className="mr-2 h-4 w-4" />
                 Refund
               </Button>
@@ -197,15 +160,16 @@ export default function SaleDetailPage() {
           </div>
         }
       />
-
       <div className="p-6 space-y-6">
-        {/* Summary Cards */}
+      
         <div className="grid gap-4 md:grid-cols-4">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">Status</CardTitle>
             </CardHeader>
-            <CardContent>{getStatusBadge(sale.status)}</CardContent>
+            <CardContent>
+              {getStatusBadge(sale.status)}
+            </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
@@ -220,9 +184,7 @@ export default function SaleDetailPage() {
               <CardTitle className="text-sm font-medium">Discount</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-destructive">
-                -{formatCurrency(sale.discount)}
-              </p>
+              <p className="text-2xl font-bold text-destructive">-{formatCurrency(sale.discount)}</p>
             </CardContent>
           </Card>
           <Card>
@@ -230,34 +192,21 @@ export default function SaleDetailPage() {
               <CardTitle className="text-sm font-medium">Net Amount</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-green-600">
-                {formatCurrency(sale.netAmount)}
-              </p>
+              <p className="text-2xl font-bold text-green-600">{formatCurrency(sale.netAmount)}</p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Customer & Payment Info */}
+       
         <div className="grid gap-6 md:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle>Customer Information</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <p>
-                <span className="text-muted-foreground">Name:</span>{" "}
-                {sale.customerName || "Guest"}
-              </p>
-              {sale.customerPhone && (
-                <p>
-                  <span className="text-muted-foreground">Phone:</span> {sale.customerPhone}
-                </p>
-              )}
-              {sale.customerEmail && (
-                <p>
-                  <span className="text-muted-foreground">Email:</span> {sale.customerEmail}
-                </p>
-              )}
+              <p><span className="text-muted-foreground">Name:</span> {sale.customerName || "Guest"}</p>
+              {sale.customerPhone && <p><span className="text-muted-foreground">Phone:</span> {sale.customerPhone}</p>}
+              {sale.customerEmail && <p><span className="text-muted-foreground">Email:</span> {sale.customerEmail}</p>}
             </CardContent>
           </Card>
 
@@ -266,32 +215,26 @@ export default function SaleDetailPage() {
               <CardTitle>Payment Details</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <p>
-                <span className="text-muted-foreground">Method:</span> {sale.paymentMethod}
-              </p>
-              <p>
-                <span className="text-muted-foreground">Amount:</span>{" "}
-                {formatCurrency(sale.netAmount)}
-              </p>
+              <p><span className="text-muted-foreground">Method:</span> {sale.paymentMethod}</p>
+              <p><span className="text-muted-foreground">Amount:</span> {formatCurrency(sale.netAmount)}</p>
               {sale.payments.map((p, idx) => (
+                
                 <p key={p.id} className="text-sm">
-                  {idx === 0 ? "Paid" : "Partial"} {p.paidAt ? formatDate(p.paidAt) : ""} –{" "}
-                  {p.status}
+                  {idx === 0 ? "Paid" : "Partial"}{" "}
+                      {p.paidAt ? formatDate(p.paidAt) : "Not paid yet"} – {p.status}
                 </p>
               ))}
               {sale.notes && (
                 <>
                   <Separator />
-                  <p>
-                    <span className="text-muted-foreground">Notes:</span> {sale.notes}
-                  </p>
+                  <p><span className="text-muted-foreground">Notes:</span> {sale.notes}</p>
                 </>
               )}
             </CardContent>
           </Card>
         </div>
 
-        {/* Items Table */}
+      
         <Card>
           <CardHeader>
             <CardTitle>Items</CardTitle>
@@ -313,67 +256,37 @@ export default function SaleDetailPage() {
                     <TableCell>
                       {item.drug.name}
                       {item.drug.genericName && (
-                        <p className="text-xs text-muted-foreground">
-                          {item.drug.genericName}
-                        </p>
-                      )}
-                      {item.batch && (
-                        <p className="text-xs text-muted-foreground">
-                          Batch: {item.batch.batchNumber} (Exp:{" "}
-                          {formatDate(item.batch.expiryDate)})
-                        </p>
+                        <p className="text-xs text-muted-foreground">{item.drug.genericName}</p>
                       )}
                     </TableCell>
-                    <TableCell className="text-right">
-                      {item.quantity} {item.drug.unit}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(item.unitPrice)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(item.discount)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(item.subtotal)}
-                    </TableCell>
+                    <TableCell className="text-right">{item.quantity} {item.drug.unit}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(item.discount)}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(item.subtotal)}</TableCell>
                   </TableRow>
                 ))}
                 <TableRow>
-                  <TableCell colSpan={4} className="text-right font-medium">
-                    Subtotal
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatCurrency(sale.totalAmount)}
-                  </TableCell>
+                  <TableCell colSpan={4} className="text-right font-medium">Subtotal</TableCell>
+                  <TableCell className="text-right">{formatCurrency(sale.totalAmount)}</TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell colSpan={4} className="text-right font-medium">
-                    Discount
-                  </TableCell>
-                  <TableCell className="text-right text-destructive">
-                    -{formatCurrency(sale.discount)}
-                  </TableCell>
+                  <TableCell colSpan={4} className="text-right font-medium">Discount</TableCell>
+                  <TableCell className="text-right text-destructive">-{formatCurrency(sale.discount)}</TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell colSpan={4} className="text-right font-medium">
-                    Tax
-                  </TableCell>
+                  <TableCell colSpan={4} className="text-right font-medium">Tax</TableCell>
                   <TableCell className="text-right">{formatCurrency(sale.tax)}</TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell colSpan={4} className="text-right font-bold">
-                    Net Total
-                  </TableCell>
-                  <TableCell className="text-right font-bold">
-                    {formatCurrency(sale.netAmount)}
-                  </TableCell>
+                  <TableCell colSpan={4} className="text-right font-bold">Net Total</TableCell>
+                  <TableCell className="text-right font-bold">{formatCurrency(sale.netAmount)}</TableCell>
                 </TableRow>
               </TableBody>
             </Table>
           </CardContent>
         </Card>
 
-        {/* Prescription Info (if any) */}
+       
         {sale.prescriptions.length > 0 && (
           <Card>
             <CardHeader>
@@ -382,21 +295,10 @@ export default function SaleDetailPage() {
             <CardContent>
               {sale.prescriptions.map((rx) => (
                 <div key={rx.id} className="space-y-2">
-                  <p>
-                    <span className="text-muted-foreground">Prescription #:</span>{" "}
-                    {rx.prescriptionNumber}
-                  </p>
-                  <p>
-                    <span className="text-muted-foreground">Patient:</span> {rx.patientName}
-                  </p>
-                  <p>
-                    <span className="text-muted-foreground">Doctor:</span> {rx.doctorName}
-                  </p>
-                  {rx.diagnosis && (
-                    <p>
-                      <span className="text-muted-foreground">Diagnosis:</span> {rx.diagnosis}
-                    </p>
-                  )}
+                  <p><span className="text-muted-foreground">Prescription #:</span> {rx.prescriptionNumber}</p>
+                  <p><span className="text-muted-foreground">Patient:</span> {rx.patientName}</p>
+                  <p><span className="text-muted-foreground">Doctor:</span> {rx.doctorName}</p>
+                  {rx.diagnosis && <p><span className="text-muted-foreground">Diagnosis:</span> {rx.diagnosis}</p>}
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -423,51 +325,15 @@ export default function SaleDetailPage() {
           </Card>
         )}
 
-        {/* Staff Info */}
         <Card>
           <CardHeader>
             <CardTitle>Processed By</CardTitle>
           </CardHeader>
           <CardContent>
-            <p>
-              {sale.user.name} ({sale.user.email})
-            </p>
+            <p>{sale.user.name} ({sale.user.email})</p>
           </CardContent>
         </Card>
       </div>
-
-      {/* Refund Confirmation Dialog */}
-      <AlertDialog open={refundDialogOpen} onOpenChange={setRefundDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Process Refund</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to refund this sale? This will restore stock and batch
-              quantities, and mark the sale as refunded.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="py-4">
-            <Label htmlFor="reason">Reason (optional)</Label>
-            <Textarea
-              id="reason"
-              placeholder="Enter reason for refund..."
-              value={refundReason}
-              onChange={(e) => setRefundReason(e.target.value)}
-            />
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={refunding}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleRefund}
-              disabled={refunding}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {refunding && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Confirm Refund
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   );
-}
+} */

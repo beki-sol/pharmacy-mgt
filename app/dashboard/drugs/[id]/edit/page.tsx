@@ -105,7 +105,7 @@ export default function EditDrugPage() {
       try {
         const [drugRes, suppliersRes] = await Promise.all([
           fetch(`/api/drug/${id}`),
-          fetch("/api/supplier?limit=100"),
+          fetch("/api/suppliers?limit=100"),
         ]);
 
         if (!drugRes.ok) {

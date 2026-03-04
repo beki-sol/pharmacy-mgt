@@ -5,6 +5,7 @@ import { Header } from "@/app/components/dashboard/Header";
 import { Button } from "@/app/components/ui/Button";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
+import { Textarea } from "@/app/components/ui/Textarea";
 import {
   Table,
   TableBody,
@@ -22,7 +23,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/app/components/ui/Select";
 import {
   Dialog,
   DialogContent,
@@ -31,7 +32,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog";
+} from "@/app/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,33 +42,23 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
-import { CalendarIcon, Package, AlertTriangle, History, RefreshCw, Plus, Minus, Eye } from "lucide-react";
-import { format } from "date-fns";
-import { cn, formatCurrency, formatDate } from "@/app/lib/utils";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
+} from "@/app/components/ui/alert-dialog";
+import { formatCurrency, formatDate } from "@/app/lib/utils";
+import { Package, AlertTriangle, History, RefreshCw, Plus, Minus, Eye, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
-import { Loader2 } from "lucide-react";
 
 // Types
 interface Drug {
   id: string;
   name: string;
-  genericName: string;
+  genericName: string | null;
   category: string;
   stock: number;
   minStockLevel: number;
   maxStockLevel: number;
   expiryDate: string | null;
-  batches: Batch[];
+  unit: string;
+  batches?: Batch[];
 }
 
 interface Batch {
@@ -77,6 +68,7 @@ interface Batch {
   quantity: number;
   remaining: number;
   costPrice: number;
+  drug?: { name: string };
 }
 
 interface InventoryLog {
@@ -87,28 +79,17 @@ interface InventoryLog {
   quantity: number;
   previousStock: number;
   newStock: number;
-  referenceType: string;
-  referenceId: string;
-  notes: string;
+  notes: string | null;
   createdAt: string;
-  user: { name: string };
+  user: { name: string } | null;
+  batchNumber?: string;
 }
-
-// Validation schema for stock adjustment
-const adjustmentSchema = z.object({
-  drugId: z.string().min(1, "Drug is required"),
-  quantity: z.number().int().positive("Quantity must be positive"),
-  type: z.enum(["ADJUSTMENT", "DAMAGE", "RETURN"]),
-  notes: z.string().optional(),
-});
-
-type AdjustmentForm = z.infer<typeof adjustmentSchema>;
 
 export default function InventoryPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [drugs, setDrugs] = useState<Drug[]>([]);
   const [logs, setLogs] = useState<InventoryLog[]>([]);
-  const [expiringSoon, setExpiringSoon] = useState<Drug[]>([]);
+  const [expiring, setExpiring] = useState<Batch[]>([]);
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, pages: 0 });
 
@@ -119,21 +100,19 @@ export default function InventoryPage() {
   const [sortBy, setSortBy] = useState("name");
   const [sortOrder, setSortOrder] = useState("asc");
 
-  // Dialog states
-  const [isAdjustDialogOpen, setIsAdjustDialogOpen] = useState(false);
+  // Adjustment dialog
+  const [adjustOpen, setAdjustOpen] = useState(false);
   const [selectedDrug, setSelectedDrug] = useState<Drug | null>(null);
-  const [viewBatchDrug, setViewBatchDrug] = useState<Drug | null>(null);
+  const [batchesForDrug, setBatchesForDrug] = useState<Batch[]>([]);
+  const [adjustType, setAdjustType] = useState<"ADJUSTMENT" | "DAMAGE" | "RETURN">("ADJUSTMENT");
+  const [adjustQty, setAdjustQty] = useState<number>(1);
+  const [adjustNotes, setAdjustNotes] = useState("");
+  const [adjustBatchId, setAdjustBatchId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
 
-  const { register, handleSubmit, reset, setValue, watch, formState: { errors } } = useForm<AdjustmentForm>({
-    resolver: zodResolver(adjustmentSchema),
-  });
-
-  const selectedDrugId = watch("drugId");
-
-  // Fetch drugs with batches
+  // Fetch drugs (overview)
   useEffect(() => {
-    const fetchInventory = async () => {
+    const fetchDrugs = async () => {
       setLoading(true);
       const params = new URLSearchParams({
         page: pagination.page.toString(),
@@ -146,29 +125,28 @@ export default function InventoryPage() {
         sortOrder,
       });
       try {
-        const res = await fetch(`/api/drugs?${params}`);
+        const res = await fetch(`/api/drug?${params}`);
         const data = await res.json();
         setDrugs(data.drugs || []);
         setPagination(data.pagination || { page: 1, limit: 10, total: 0, pages: 0 });
       } catch (error) {
-        console.error("Failed to fetch drugs", error);
-        toast.error("Failed to load inventory");
+        toast.error("Failed to load drugs");
       } finally {
         setLoading(false);
       }
     };
-    fetchInventory();
+    fetchDrugs();
   }, [pagination.page, search, category, stockStatus, sortBy, sortOrder]);
 
-  // Fetch expiring soon drugs
+  // Fetch expiring batches
   useEffect(() => {
     const fetchExpiring = async () => {
       try {
         const res = await fetch("/api/inventory/expiring");
         const data = await res.json();
-        setExpiringSoon(data.drugs || []);
+        setExpiring(data.expiring || []);
       } catch (error) {
-        console.error("Failed to fetch expiring drugs", error);
+        console.error("Failed to fetch expiring", error);
       }
     };
     fetchExpiring();
@@ -188,18 +166,82 @@ export default function InventoryPage() {
     fetchLogs();
   }, []);
 
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearch(e.target.value);
-    setPagination(prev => ({ ...prev, page: 1 }));
+  // When a drug is selected in adjust dialog, fetch its batches
+  const handleDrugSelect = async (drugId: string) => {
+    const drug = drugs.find(d => d.id === drugId);
+    setSelectedDrug(drug || null);
+    if (drugId) {
+      try {
+        const res = await fetch(`/api/drug/${drugId}/batches`);
+        const data = await res.json();
+        setBatchesForDrug(data.batches || []);
+      } catch (error) {
+        toast.error("Failed to fetch batches");
+      }
+    } else {
+      setBatchesForDrug([]);
+    }
+    setAdjustBatchId("");
   };
 
-  const clearFilters = () => {
-    setSearch("");
-    setCategory("");
-    setStockStatus("");
-    setSortBy("name");
-    setSortOrder("asc");
-    setPagination(prev => ({ ...prev, page: 1 }));
+  const handleAdjustSubmit = async () => {
+    if (!selectedDrug) {
+      toast.error("Please select a drug");
+      return;
+    }
+    if (adjustQty <= 0) {
+      toast.error("Quantity must be positive");
+      return;
+    }
+    // If drug has batches, ensure batch selected and quantity ≤ remaining
+    if (batchesForDrug.length > 0) {
+      if (!adjustBatchId) {
+        toast.error("Please select a batch");
+        return;
+      }
+      const batch = batchesForDrug.find(b => b.id === adjustBatchId);
+      if (batch && adjustQty > batch.remaining) {
+        toast.error(`Batch ${batch.batchNumber} only has ${batch.remaining} remaining`);
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/inventory/adjust", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          drugId: selectedDrug.id,
+          quantity: adjustQty,
+          type: adjustType,
+          notes: adjustNotes,
+          batchId: adjustBatchId || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Adjustment failed");
+      toast.success("Stock adjusted");
+      setAdjustOpen(false);
+      // Reset form
+      setSelectedDrug(null);
+      setBatchesForDrug([]);
+      setAdjustType("ADJUSTMENT");
+      setAdjustQty(1);
+      setAdjustNotes("");
+      setAdjustBatchId("");
+      // Refresh relevant tabs
+      setPagination(prev => ({ ...prev, page: 1 })); // refresh overview
+      // Optionally refresh logs and expiring
+      const logsRes = await fetch("/api/inventory/logs");
+      setLogs((await logsRes.json()).logs || []);
+      const expRes = await fetch("/api/inventory/expiring");
+      setExpiring((await expRes.json()).expiring || []);
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const getStockStatusBadge = (stock: number, min: number) => {
@@ -216,45 +258,13 @@ export default function InventoryPage() {
     return <Badge variant="success">Valid</Badge>;
   };
 
-  const handleAdjustSubmit = async (data: AdjustmentForm) => {
-    setSubmitting(true);
-    try {
-      const res = await fetch("/api/inventory/adjust", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || "Adjustment failed");
-      toast.success("Stock adjusted successfully");
-      setIsAdjustDialogOpen(false);
-      reset();
-      // Refresh data
-      setPagination(prev => ({ ...prev, page: 1 }));
-    } catch (error: any) {
-      toast.error(error.message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const openAdjustDialog = (drug?: Drug) => {
-    if (drug) {
-      setValue("drugId", drug.id);
-      setSelectedDrug(drug);
-    } else {
-      setSelectedDrug(null);
-    }
-    setIsAdjustDialogOpen(true);
-  };
-
   return (
     <>
-      <Header 
-        title="Inventory Management" 
+      <Header
+        title="Inventory Management"
         subtitle="Track stock, batches, and expiry"
         actions={
-          <Button onClick={() => openAdjustDialog()}>
+          <Button onClick={() => setAdjustOpen(true)}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Adjust Stock
           </Button>
@@ -262,13 +272,13 @@ export default function InventoryPage() {
       />
 
       <div className="p-6 space-y-6">
-        {/* Expiry Alerts */}
-        {expiringSoon.length > 0 && (
+        {/* Expiry Alert Banner */}
+        {expiring.length > 0 && (
           <Card className="border-yellow-200 bg-yellow-50">
             <CardContent className="p-4 flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-yellow-600" />
               <span className="text-sm text-yellow-800">
-                {expiringSoon.length} drug(s) are expiring within 30 days. Please review.
+                {expiring.length} batch(es) are expiring within 30 days or already expired.
               </span>
               <Button variant="link" className="ml-auto" onClick={() => setActiveTab("expiring")}>
                 View
@@ -295,7 +305,10 @@ export default function InventoryPage() {
                     <Input
                       placeholder="Drug name, generic..."
                       value={search}
-                      onChange={handleSearch}
+                      onChange={(e) => {
+                        setSearch(e.target.value);
+                        setPagination(prev => ({ ...prev, page: 1 }));
+                      }}
                     />
                   </div>
                   <div className="space-y-2">
@@ -328,11 +341,14 @@ export default function InventoryPage() {
                   </div>
                   <div className="space-y-2">
                     <Label>Sort By</Label>
-                    <Select value={`${sortBy}-${sortOrder}`} onValueChange={(val) => {
-                      const [sb, so] = val.split("-");
-                      setSortBy(sb);
-                      setSortOrder(so);
-                    }}>
+                    <Select
+                      value={`${sortBy}-${sortOrder}`}
+                      onValueChange={(val) => {
+                        const [sb, so] = val.split("-");
+                        setSortBy(sb);
+                        setSortOrder(so as "asc" | "desc");
+                      }}
+                    >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -347,7 +363,14 @@ export default function InventoryPage() {
                   </div>
                 </div>
                 <div className="flex justify-end mt-4">
-                  <Button variant="outline" size="sm" onClick={clearFilters}>
+                  <Button variant="outline" size="sm" onClick={() => {
+                    setSearch("");
+                    setCategory("");
+                    setStockStatus("");
+                    setSortBy("name");
+                    setSortOrder("asc");
+                    setPagination(prev => ({ ...prev, page: 1 }));
+                  }}>
                     Clear Filters
                   </Button>
                 </div>
@@ -358,6 +381,8 @@ export default function InventoryPage() {
               <CardContent className="p-0">
                 {loading ? (
                   <div className="p-8 text-center">Loading...</div>
+                ) : drugs.length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground">No drugs found</div>
                 ) : (
                   <Table>
                     <TableHeader>
@@ -393,10 +418,14 @@ export default function InventoryPage() {
                           </TableCell>
                           <TableCell>{getStockStatusBadge(drug.stock, drug.minStockLevel)}</TableCell>
                           <TableCell className="text-right">
-                            <Button variant="ghost" size="icon" onClick={() => setViewBatchDrug(drug)}>
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                            <Button variant="ghost" size="icon" onClick={() => openAdjustDialog(drug)}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                handleDrugSelect(drug.id);
+                                setAdjustOpen(true);
+                              }}
+                            >
                               <RefreshCw className="h-4 w-4" />
                             </Button>
                           </TableCell>
@@ -438,13 +467,15 @@ export default function InventoryPage() {
           <TabsContent value="batches" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>Batch Tracking</CardTitle>
+                <CardTitle>All Batches</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-6">
-                  {drugs.map((drug) => (
-                    drug.batches && drug.batches.length > 0 && (
-                      <div key={drug.id} className="border rounded-lg p-4">
+                {drugs.filter(d => d.batches && d.batches.length > 0).length === 0 ? (
+                  <p className="text-center text-muted-foreground">No batches found</p>
+                ) : (
+                  drugs.map((drug) =>
+                    drug.batches && drug.batches.length > 0 ? (
+                      <div key={drug.id} className="mb-6 last:mb-0">
                         <h3 className="font-semibold mb-2">{drug.name}</h3>
                         <Table>
                           <TableHeader>
@@ -471,9 +502,9 @@ export default function InventoryPage() {
                           </TableBody>
                         </Table>
                       </div>
-                    )
-                  ))}
-                </div>
+                    ) : null
+                  )
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -482,7 +513,7 @@ export default function InventoryPage() {
           <TabsContent value="expiring" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>Expiry Monitoring</CardTitle>
+                <CardTitle>Expiring & Expired Batches</CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -493,31 +524,41 @@ export default function InventoryPage() {
                       <TableHead>Expiry Date</TableHead>
                       <TableHead>Days Left</TableHead>
                       <TableHead>Remaining</TableHead>
-                      <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {drugs.flatMap(drug => 
-                      drug.batches?.map(batch => {
-                        const daysLeft = Math.ceil((new Date(batch.expiryDate).getTime() - Date.now()) / (1000 * 3600 * 24));
-                        if (daysLeft > 60) return null;
-                        return (
-                          <TableRow key={batch.id}>
-                            <TableCell>{drug.name}</TableCell>
-                            <TableCell>{batch.batchNumber}</TableCell>
-                            <TableCell>{formatDate(batch.expiryDate)}</TableCell>
-                            <TableCell>
-                              <Badge variant={daysLeft < 0 ? "destructive" : daysLeft < 30 ? "warning" : "default"}>
-                                {daysLeft < 0 ? "Expired" : `${daysLeft} days`}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>{batch.remaining}</TableCell>
-                            <TableCell>
-                              <Button variant="outline" size="sm">Mark as Damaged</Button>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })
+                    {expiring.map((batch) => {
+                      const daysLeft = Math.ceil(
+                        (new Date(batch.expiryDate).getTime() - Date.now()) / (1000 * 3600 * 24)
+                      );
+                      return (
+                        <TableRow key={batch.id}>
+                          <TableCell>{batch.drug?.name || "—"}</TableCell>
+                          <TableCell>{batch.batchNumber}</TableCell>
+                          <TableCell>{formatDate(batch.expiryDate)}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                daysLeft < 0
+                                  ? "destructive"
+                                  : daysLeft < 30
+                                  ? "warning"
+                                  : "default"
+                              }
+                            >
+                              {daysLeft < 0 ? "Expired" : `${daysLeft} days`}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{batch.remaining}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {expiring.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground">
+                          No expiring batches found
+                        </TableCell>
+                      </TableRow>
                     )}
                   </TableBody>
                 </Table>
@@ -529,7 +570,7 @@ export default function InventoryPage() {
           <TabsContent value="logs" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>Inventory History</CardTitle>
+                <CardTitle>Recent Inventory Activity</CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -538,9 +579,9 @@ export default function InventoryPage() {
                       <TableHead>Date</TableHead>
                       <TableHead>Drug</TableHead>
                       <TableHead>Type</TableHead>
-                      <TableHead>Quantity</TableHead>
-                      <TableHead>Previous</TableHead>
-                      <TableHead>New</TableHead>
+                      <TableHead className="text-right">Quantity</TableHead>
+                      <TableHead className="text-right">Previous</TableHead>
+                      <TableHead className="text-right">New</TableHead>
                       <TableHead>User</TableHead>
                       <TableHead>Notes</TableHead>
                     </TableRow>
@@ -551,23 +592,40 @@ export default function InventoryPage() {
                         <TableCell>{formatDate(log.createdAt)}</TableCell>
                         <TableCell>{log.drugName}</TableCell>
                         <TableCell>
-                          <Badge variant={
-                            log.type === "PURCHASE" ? "success" :
-                            log.type === "SALE" ? "default" :
-                            log.type === "ADJUSTMENT" ? "warning" : "destructive"
-                          }>
+                          <Badge
+                            variant={
+                              log.type === "PURCHASE"
+                                ? "success"
+                                : log.type === "SALE"
+                                ? "default"
+                                : log.type === "ADJUSTMENT"
+                                ? "warning"
+                                : "destructive"
+                            }
+                          >
                             {log.type}
                           </Badge>
                         </TableCell>
-                        <TableCell className={log.quantity > 0 ? "text-green-600" : "text-red-600"}>
+                        <TableCell
+                          className={`text-right ${
+                            log.quantity > 0 ? "text-green-600" : "text-red-600"
+                          }`}
+                        >
                           {log.quantity > 0 ? `+${log.quantity}` : log.quantity}
                         </TableCell>
-                        <TableCell>{log.previousStock}</TableCell>
-                        <TableCell>{log.newStock}</TableCell>
+                        <TableCell className="text-right">{log.previousStock}</TableCell>
+                        <TableCell className="text-right">{log.newStock}</TableCell>
                         <TableCell>{log.user?.name || "System"}</TableCell>
                         <TableCell className="max-w-xs truncate">{log.notes}</TableCell>
                       </TableRow>
                     ))}
+                    {logs.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center text-muted-foreground">
+                          No inventory logs yet
+                        </TableCell>
+                      </TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -576,121 +634,111 @@ export default function InventoryPage() {
         </Tabs>
       </div>
 
-      {/* Batch Details Dialog */}
-      <Dialog open={!!viewBatchDrug} onOpenChange={(open) => !open && setViewBatchDrug(null)}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Batch Details - {viewBatchDrug?.name}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Batch Number</TableHead>
-                  <TableHead>Expiry Date</TableHead>
-                  <TableHead>Quantity</TableHead>
-                  <TableHead>Remaining</TableHead>
-                  <TableHead>Cost Price</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {viewBatchDrug?.batches?.map((batch) => (
-                  <TableRow key={batch.id}>
-                    <TableCell>{batch.batchNumber}</TableCell>
-                    <TableCell>{formatDate(batch.expiryDate)}</TableCell>
-                    <TableCell>{batch.quantity}</TableCell>
-                    <TableCell>{batch.remaining}</TableCell>
-                    <TableCell>{formatCurrency(batch.costPrice)}</TableCell>
-                    <TableCell>{getExpiryStatus(batch.expiryDate)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </DialogContent>
-      </Dialog>
-
       {/* Stock Adjustment Dialog */}
-      <Dialog open={isAdjustDialogOpen} onOpenChange={setIsAdjustDialogOpen}>
-        <DialogContent>
+      <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
+        <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>Adjust Stock</DialogTitle>
             <DialogDescription>
-              Add or remove stock manually. For purchases, use Purchase Orders.
+              Manually add or remove stock. For purchases, use Purchase Orders.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSubmit(handleAdjustSubmit)} className="space-y-4">
+          <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="drugId">Select Drug</Label>
-              <Select
-                onValueChange={(value) => {
-                  setValue("drugId", value);
-                  const drug = drugs.find(d => d.id === value);
-                  setSelectedDrug(drug || null);
-                }}
-                defaultValue={selectedDrug?.id}
-              >
+              <Label htmlFor="drug">Drug *</Label>
+              <Select onValueChange={handleDrugSelect}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Choose a drug" />
+                  <SelectValue placeholder="Select a drug" />
                 </SelectTrigger>
                 <SelectContent>
-                  {drugs.map(drug => (
+                  {drugs.map((drug) => (
                     <SelectItem key={drug.id} value={drug.id}>
-                      {drug.name} (Current: {drug.stock})
+                      {drug.name} (Stock: {drug.stock})
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {errors.drugId && <p className="text-sm text-destructive">{errors.drugId.message}</p>}
             </div>
 
-            {selectedDrug && (
-              <div className="text-sm bg-muted p-2 rounded">
-                Current Stock: <span className="font-bold">{selectedDrug.stock}</span>
+            {selectedDrug && batchesForDrug.length > 0 && (
+              <div className="space-y-2">
+                <Label htmlFor="batch">Batch *</Label>
+                <Select value={adjustBatchId} onValueChange={setAdjustBatchId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a batch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {batchesForDrug.map((batch) => {
+                      const daysLeft = Math.ceil(
+                        (new Date(batch.expiryDate).getTime() - Date.now()) / (1000 * 3600 * 24)
+                      );
+                      return (
+                        <SelectItem key={batch.id} value={batch.id}>
+                          {batch.batchNumber} – Exp: {formatDate(batch.expiryDate)} (Rem:{" "}
+                          {batch.remaining}) {daysLeft < 0 ? "(Expired)" : ""}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+                {batchesForDrug.length === 1 && (
+                  <p className="text-xs text-muted-foreground">
+                    Only one batch available. It has been auto‑selected.
+                  </p>
+                )}
               </div>
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="type">Adjustment Type</Label>
-              <Select onValueChange={(value) => setValue("type", value as any)}>
+              <Label htmlFor="type">Adjustment Type *</Label>
+              <Select
+                value={adjustType}
+                onValueChange={(value: any) => setAdjustType(value)}
+              >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select type" />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ADJUSTMENT">Manual Adjustment</SelectItem>
-                  <SelectItem value="DAMAGE">Damage/Waste</SelectItem>
+                  <SelectItem value="DAMAGE">Damage / Waste</SelectItem>
                   <SelectItem value="RETURN">Return</SelectItem>
                 </SelectContent>
               </Select>
-              {errors.type && <p className="text-sm text-destructive">{errors.type.message}</p>}
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="quantity">Quantity</Label>
+              <Label htmlFor="qty">Quantity *</Label>
               <Input
-                id="quantity"
+                id="qty"
                 type="number"
-                {...register("quantity", { valueAsNumber: true })}
+                min={1}
+                value={adjustQty}
+                onChange={(e) => setAdjustQty(parseInt(e.target.value) || 1)}
               />
-              {errors.quantity && <p className="text-sm text-destructive">{errors.quantity.message}</p>}
+              <p className="text-xs text-muted-foreground">
+                {adjustType === "DAMAGE" ? "Negative quantity (will subtract)" : "Positive quantity (will add)"}
+              </p>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="notes">Notes (Optional)</Label>
-              <Input id="notes" {...register("notes")} />
+              <Label htmlFor="notes">Notes</Label>
+              <Textarea
+                id="notes"
+                placeholder="Optional reason"
+                value={adjustNotes}
+                onChange={(e) => setAdjustNotes(e.target.value)}
+              />
             </div>
-
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setIsAdjustDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Apply Adjustment
-              </Button>
-            </DialogFooter>
-          </form>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAdjustOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAdjustSubmit} disabled={submitting}>
+              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Apply
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

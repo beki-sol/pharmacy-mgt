@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { auth } from "@/app/lib/auth";
 
-// GET /api/notifications - list notifications for current user
+// Helper to get default user ID (first admin) – for development without auth
+async function getDefaultUserId() {
+  const user = await prisma.user.findFirst({
+    where: { role: "ADMIN" },
+    select: { id: true },
+  });
+  if (!user) throw new Error("No admin user found – cannot fetch notifications");
+  return user.id;
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const userId = await getDefaultUserId();
 
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1");
@@ -17,7 +22,7 @@ export async function GET(request: NextRequest) {
 
     const skip = (page - 1) * limit;
 
-    const where: any = { userId: session.user.id };
+    const where: any = { userId };
     if (unreadOnly) where.isRead = false;
 
     const [notifications, total] = await Promise.all([
@@ -40,20 +45,15 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// PATCH /api/notifications - mark as read
 export async function PATCH(request: NextRequest) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
+    const userId = await getDefaultUserId();
     const body = await request.json();
     const { ids, markAll } = body;
 
     if (markAll) {
       await prisma.notification.updateMany({
-        where: { userId: session.user.id, isRead: false },
+        where: { userId, isRead: false },
         data: { isRead: true },
       });
       return NextResponse.json({ success: true });
@@ -61,7 +61,7 @@ export async function PATCH(request: NextRequest) {
 
     if (ids && Array.isArray(ids)) {
       await prisma.notification.updateMany({
-        where: { id: { in: ids }, userId: session.user.id },
+        where: { id: { in: ids }, userId },
         data: { isRead: true },
       });
       return NextResponse.json({ success: true });
