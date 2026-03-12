@@ -440,3 +440,12 @@ enum InventoryAction {
   EXPIRED
   TRANSFER
 }
+model Draft {
+  id        String   @id @default(cuid())
+  sessionId String   // identifies the anonymous user
+  data      Json     // stores the entire sale form data
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sessionId])
+}

@@ -1,26 +1,28 @@
-import NextAuth, { DefaultSession } from "next-auth";
-import { Role } from "@prisma/client";
+import NextAuth from 'next-auth';
 
-declare module "next-auth" {
-  interface Session {
-    user: {
-      id: string;
-      role: Role;
-      twoFactorEnabled: boolean;
-    } & DefaultSession["user"];
-  }
-
-  interface User {
-    role: Role;
-    twoFactorEnabled: boolean;
-    twoFactorSecret?: string;
-  }
+enum Role {
+  ADMIN,
+  PHARMACIST,
+  SALES_ASSISTANT,
+  MANAGER,
+  INVENTORY_MANAGER,
 }
 
-declare module "next-auth/jwt" {
-  interface JWT {
-    id: string;
-    role: Role;
-    twoFactorEnabled: boolean;
-  }
+declare module 'next-auth' {
+    interface Session {
+        user: {
+            id: string,
+            role: string,
+            email: string,
+            name: string,
+            twoFactorEnabled: boolean
+;
+        }
+    }
+
+    interface User {
+        role: string ,
+        twoFactorEnabled: boolean;
+        twoFactorSecret?: string;
+    }
 }

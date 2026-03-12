@@ -1,7 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { auth } from "@/app/lib/auth";
 import { z } from "zod";
+
+// Helper to convert Decimal to number (and handle BigInt)
+function convertDecimal(obj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === "bigint") return Number(obj);
+  if (typeof obj === "object" && "toNumber" in obj) return obj.toNumber();
+  if (Array.isArray(obj)) return obj.map(convertDecimal);
+  if (typeof obj === "object") {
+    const result: any = {};
+    for (const key in obj) result[key] = convertDecimal(obj[key]);
+    return result;
+  }
+  return obj;
+}
+
+// Helper to get default user ID (first admin) – for approvedBy
+async function getDefaultUserId() {
+  const user = await prisma.user.findFirst({
+    where: { role: "ADMIN" },
+    select: { id: true },
+  });
+  if (!user) throw new Error("No admin user found – cannot create expense");
+  return user.id;
+}
 
 const expenseSchema = z.object({
   category: z.string().min(1),
@@ -13,9 +36,6 @@ const expenseSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth();
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
@@ -41,8 +61,14 @@ export async function GET(request: NextRequest) {
       prisma.expense.count({ where }),
     ]);
 
+    // Convert Decimal amounts to numbers
+    const convertedExpenses = expenses.map(e => ({
+      ...e,
+      amount: e.amount ? Number(e.amount) : 0,
+    }));
+
     return NextResponse.json({
-      expenses,
+      expenses: convertedExpenses,
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
   } catch (error) {
@@ -53,11 +79,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await auth();
-    if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
+    const userId = await getDefaultUserId(); // for approvedBy
     const body = await request.json();
     const data = expenseSchema.parse({
       ...body,
@@ -68,11 +90,15 @@ export async function POST(request: NextRequest) {
       data: {
         ...data,
         date: new Date(data.date),
-        approvedBy: session.user.id,
+        approvedBy: userId,
       },
     });
 
-    return NextResponse.json(expense, { status: 201 });
+    // Convert amount to number
+    return NextResponse.json({
+      ...expense,
+      amount: expense.amount ? Number(expense.amount) : 0,
+    }, { status: 201 });
   } catch (error: any) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.issues[0].message }, { status: 400 });

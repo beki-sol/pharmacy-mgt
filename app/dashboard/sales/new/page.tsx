@@ -25,7 +25,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/Select";
-import { Plus, Trash2, Loader2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
+import { Plus, Trash2, Loader2, Save, FolderOpen } from "lucide-react";
 import toast from "react-hot-toast";
 
 // Schema
@@ -40,12 +48,7 @@ const itemSchema = z.object({
 const saleFormSchema = z.object({
   customerName: z.string().optional(),
   customerPhone: z.string().optional(),
-  customerEmail: z
-  .string()
-  .optional()
-  .refine(val => !val || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val), {
-    message: "Invalid email",
-  }),
+  customerEmail: z.string().email().optional(),
   paymentMethod: z.enum(["CASH", "CARD", "INSURANCE", "MIXED", "CHAPA"]),
   items: z.array(itemSchema).min(1, "At least one item required"),
   discount: z.number().min(0),
@@ -72,12 +75,20 @@ interface Batch {
   remaining: number;
 }
 
+interface Draft {
+  id: string;
+  data: SaleFormData;
+}
+
 export default function NewSalePage() {
   const router = useRouter();
   const [drugs, setDrugs] = useState<Drug[]>([]);
   const [batches, setBatches] = useState<Record<string, Batch[]>>({});
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [draftDialogOpen, setDraftDialogOpen] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
 
   const {
     register,
@@ -85,23 +96,20 @@ export default function NewSalePage() {
     handleSubmit,
     watch,
     setValue,
+    reset,
     formState: { errors },
   } = useForm<SaleFormData>({
     resolver: zodResolver(saleFormSchema),
     defaultValues: {
       items: [{ drugId: "", quantity: 1, unitPrice: 0, discount: 0 }],
       paymentMethod: "CASH",
-       discount: 0,
+      discount: 0,
       tax: 0,
       isPrescription: false,
     },
   });
 
-  const { fields, append, remove } = useFieldArray({
-    control,
-    name: "items",
-  });
-
+  const { fields, append, remove } = useFieldArray({ control, name: "items" });
   const watchedItems = watch("items");
 
   // Load drugs
@@ -109,9 +117,11 @@ export default function NewSalePage() {
     const fetchDrugs = async () => {
       try {
         const res = await fetch("/api/drug?limit=100");
+        if (!res.ok) throw new Error("Failed to load drugs");
         const data = await res.json();
         setDrugs(data.drugs || []);
       } catch (error) {
+        console.error("Fetch drugs error:", error);
         toast.error("Failed to load drugs");
       } finally {
         setFetching(false);
@@ -120,43 +130,33 @@ export default function NewSalePage() {
     fetchDrugs();
   }, []);
 
-  // Fetch batches when a drug is selected – only for changed drugId
+  // Fetch batches when drug changes
   useEffect(() => {
-    const fetchBatchesForNewDrugs = async () => {
+    const fetchBatches = async () => {
       const drugIds = watchedItems.map((i) => i.drugId).filter(Boolean);
       const uniqueIds = [...new Set(drugIds)];
-      const newBatchMap: Record<string, Batch[]> = {};
-
+      const batchMap: Record<string, Batch[]> = {};
       await Promise.all(
         uniqueIds.map(async (drugId) => {
           if (!drugId) return;
-          // Only fetch if not already in batches
-          if (batches[drugId]) return;
           try {
             const res = await fetch(`/api/drug/${drugId}/batches`);
+            if (!res.ok) throw new Error(`Failed to fetch batches for drug ${drugId}`);
             const data = await res.json();
-            // Sort batches by expiry (FEFO)
-            const sorted = (data.batches || []).sort(
-              (a: Batch, b: Batch) =>
-                new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime()
-            );
-            newBatchMap[drugId] = sorted;
+            batchMap[drugId] = data.batches || [];
           } catch (error) {
-            console.error("Failed to fetch batches", error);
+            console.error("Fetch batches error:", error);
           }
         })
       );
-
-      if (Object.keys(newBatchMap).length > 0) {
-        setBatches((prev) => ({ ...prev, ...newBatchMap }));
-      }
+      setBatches(batchMap);
     };
-    fetchBatchesForNewDrugs();
-  }, [watchedItems.map((i) => i.drugId).join(",")]); // eslint-disable-line
+    fetchBatches();
+  }, [watchedItems.map((i) => i.drugId).join(",")]);
 
   // Auto-select batch if only one available
   useEffect(() => {
-    fields.forEach((field, index) => {
+    fields.forEach((_, index) => {
       const drugId = watchedItems[index]?.drugId;
       if (!drugId) return;
       const available = batches[drugId];
@@ -166,69 +166,101 @@ export default function NewSalePage() {
     });
   }, [batches, watchedItems, setValue, fields]);
 
-  // Validation before submit
-  const validateItems = (data: SaleFormData): boolean => {
+  // Load drafts list
+  const loadDrafts = async () => {
+    try {
+      const res = await fetch("/api/sales/drafts");
+      if (!res.ok) throw new Error("Failed to load drafts");
+      const data = await res.json();
+      setDrafts(data.drafts || []);
+    } catch (error) {
+      console.error("Load drafts error:", error);
+      toast.error("Failed to load drafts");
+    }
+  };
+
+  const saveDraft = async () => {
+    const currentData = watch();
+    if (currentData.items.length === 0 || !currentData.items[0].drugId) {
+      toast.error("Add at least one item before saving draft");
+      return;
+    }
+    setSavingDraft(true);
+    try {
+      const res = await fetch("/api/sales/drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: currentData }),
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || "Failed to save draft");
+      }
+      toast.success("Draft saved");
+      await loadDrafts();
+    } catch (error: any) {
+      console.error("Save draft error:", error);
+      toast.error(error.message);
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
+  const loadDraft = (draft: Draft) => {
+    reset(draft.data);
+    setDraftDialogOpen(false);
+    toast.success("Draft loaded");
+  };
+
+  const deleteDraft = async (draftId: string) => {
+    try {
+      const res = await fetch(`/api/sales/drafts?draftId=${draftId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || "Failed to delete");
+      }
+      setDrafts((prev) => prev.filter((d) => d.id !== draftId));
+      toast.success("Draft deleted");
+    } catch (error: any) {
+      console.error("Delete draft error:", error);
+      toast.error(error.message);
+    }
+  };
+
+  const onSubmit = async (data: SaleFormData) => {
+    // Client-side validation
     for (const item of data.items) {
       const drug = drugs.find((d) => d.id === item.drugId);
       if (!drug) {
         toast.error("Invalid drug selection");
-        return false;
+        return;
       }
-
-      // Stock check
       if (item.quantity > drug.stock) {
         toast.error(`Insufficient stock for ${drug.name}. Available: ${drug.stock}`);
-        return false;
+        return;
       }
-
       const drugBatches = batches[item.drugId];
       if (drugBatches && drugBatches.length > 0) {
-        // Must select a batch if batches exist
         if (!item.batchId) {
           toast.error(`Please select a batch for ${drug.name}`);
-          return false;
+          return;
         }
-
         const selectedBatch = drugBatches.find((b) => b.id === item.batchId);
         if (!selectedBatch) {
           toast.error(`Selected batch not found for ${drug.name}`);
-          return false;
+          return;
         }
-
-        // Batch remaining check
         if (item.quantity > selectedBatch.remaining) {
-          toast.error(
-            `Batch ${selectedBatch.batchNumber} has only ${selectedBatch.remaining} left`
-          );
-          return false;
+          toast.error(`Batch ${selectedBatch.batchNumber} has only ${selectedBatch.remaining} left`);
+          return;
         }
-
-        // Expiry check
-        const isExpired = new Date(selectedBatch.expiryDate) < new Date();
-        if (isExpired) {
+        if (new Date(selectedBatch.expiryDate) < new Date()) {
           toast.error(`Batch ${selectedBatch.batchNumber} is expired`);
-          return false;
+          return;
         }
-      } else {
-        // No batches – still need to check total stock (already done)
       }
-    }
-    return true;
-  };
-
-  // Prevent duplicate drug selection
-  const handleAddItem = () => {
-    const selectedIds = watchedItems.map((i) => i.drugId).filter(Boolean);
-    // We'll just add an empty item; duplicate prevention will happen on submit
-    // If you want to prevent adding same drug again, you'd need to check against new drugId.
-    // For now, we allow duplicates but backend will handle stock.
-    append({ drugId: "", quantity: 1, unitPrice: 0, discount: 0 });
-  };
-
-  const onSubmit = async (data: SaleFormData) => {
-    if (!validateItems(data)) {
-      setLoading(false);
-      return;
     }
 
     setLoading(true);
@@ -239,10 +271,13 @@ export default function NewSalePage() {
         body: JSON.stringify(data),
       });
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error || "Failed to create sale");
+      if (!res.ok) {
+        throw new Error(result.error || "Failed to create sale");
+      }
       toast.success("Sale completed!");
       router.push("/dashboard/sales");
     } catch (error: any) {
+      console.error("Submit sale error:", error);
       toast.error(error.message);
     } finally {
       setLoading(false);
@@ -253,14 +288,12 @@ export default function NewSalePage() {
     const items = watch("items");
     const globalDiscount = watch("discount") || 0;
     const tax = watch("tax") || 0;
-
     let subtotal = 0;
     items.forEach((item) => {
       const itemSubtotal = (item.unitPrice || 0) * (item.quantity || 0);
       const itemAfterDiscount = itemSubtotal - (item.discount || 0);
       subtotal += itemAfterDiscount;
     });
-
     const afterGlobalDiscount = subtotal - globalDiscount;
     return afterGlobalDiscount + tax;
   };
@@ -278,7 +311,22 @@ export default function NewSalePage() {
 
   return (
     <>
-      <Header title="New Sale" subtitle="Create a new sales transaction" />
+      <Header
+        title="New Sale"
+        subtitle="Create a new sales transaction"
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={saveDraft} disabled={savingDraft}>
+              {savingDraft ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              Save Draft
+            </Button>
+            <Button variant="outline" onClick={() => { loadDrafts(); setDraftDialogOpen(true); }}>
+              <FolderOpen className="mr-2 h-4 w-4" />
+              Load Draft
+            </Button>
+          </div>
+        }
+      />
       <div className="p-6 max-w-5xl mx-auto">
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           {/* Customer Card */}
@@ -299,6 +347,9 @@ export default function NewSalePage() {
               <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="customerEmail">Email</Label>
                 <Input id="customerEmail" type="email" {...register("customerEmail")} />
+                {errors.customerEmail && (
+                  <p className="text-sm text-destructive">{errors.customerEmail.message}</p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -341,6 +392,9 @@ export default function NewSalePage() {
                           ))}
                         </SelectContent>
                       </Select>
+                      {errors.items?.[index]?.drugId && (
+                        <p className="text-sm text-destructive">{errors.items[index].drugId?.message}</p>
+                      )}
                     </div>
 
                     {/* Quantity */}
@@ -352,6 +406,9 @@ export default function NewSalePage() {
                         max={drug?.stock || 9999}
                         {...register(`items.${index}.quantity`, { valueAsNumber: true })}
                       />
+                      {errors.items?.[index]?.quantity && (
+                        <p className="text-sm text-destructive">{errors.items[index].quantity?.message}</p>
+                      )}
                     </div>
 
                     {/* Unit Price */}
@@ -362,6 +419,9 @@ export default function NewSalePage() {
                         step="0.01"
                         {...register(`items.${index}.unitPrice`, { valueAsNumber: true })}
                       />
+                      {errors.items?.[index]?.unitPrice && (
+                        <p className="text-sm text-destructive">{errors.items[index].unitPrice?.message}</p>
+                      )}
                     </div>
 
                     {/* Item Discount */}
@@ -409,11 +469,6 @@ export default function NewSalePage() {
                           )}
                         </SelectContent>
                       </Select>
-                      {availableBatches.length > 0 && (
-                        <p className="text-xs text-muted-foreground">
-                          Required if batches exist
-                        </p>
-                      )}
                     </div>
 
                     {/* Remove Button */}
@@ -432,10 +487,13 @@ export default function NewSalePage() {
                 );
               })}
 
-              <Button type="button" variant="outline" onClick={handleAddItem}>
+              <Button type="button" variant="outline" onClick={() => append({ drugId: "", quantity: 1, unitPrice: 0, discount: 0 })}>
                 <Plus className="mr-2 h-4 w-4" />
                 Add Item
               </Button>
+              {errors.items && (
+                <p className="text-sm text-destructive">{errors.items.message}</p>
+              )}
             </CardContent>
           </Card>
 
@@ -462,6 +520,9 @@ export default function NewSalePage() {
                     <SelectItem value="CHAPA">Chapa (Online)</SelectItem>
                   </SelectContent>
                 </Select>
+                {errors.paymentMethod && (
+                  <p className="text-sm text-destructive">{errors.paymentMethod.message}</p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label>Global Discount</Label>
@@ -504,6 +565,49 @@ export default function NewSalePage() {
           </Card>
         </form>
       </div>
+
+      {/* Drafts Dialog */}
+      <Dialog open={draftDialogOpen} onOpenChange={setDraftDialogOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Saved Drafts</DialogTitle>
+            <DialogDescription>
+              Select a draft to load. Unsaved changes will be lost.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-96 overflow-auto">
+            {drafts.length === 0 ? (
+              <p className="text-center text-muted-foreground py-4">No drafts found</p>
+            ) : (
+              drafts.map((draft) => (
+                <div key={draft.id} className="flex items-center justify-between p-2 border rounded">
+                  <div>
+                    <p className="font-medium">
+                      {draft.data.items.length} item(s) – Total: ${draft.data.items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0).toFixed(2)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Customer: {draft.data.customerName || "Guest"} | Payment: {draft.data.paymentMethod}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => loadDraft(draft)}>
+                      Load
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => deleteDraft(draft.id)}>
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDraftDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
