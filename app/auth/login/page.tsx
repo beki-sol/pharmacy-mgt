@@ -55,20 +55,12 @@ export default function LoginPage() {
       });
 
       if (result?.error) {
-        // Check if the error indicates 2FA is required
-        // The backend should return an error message containing "2FA code required"
         if (result.error.includes("2FA code required")) {
-          // Store email temporarily (password is not stored for security)
-          // Instead, we redirect to a 2FA page that will re-prompt for password or use a token
-          // For simplicity, we'll pass email and callbackUrl
-          router.push(
-            `/auth/two-factor?email=${encodeURIComponent(data.email)}&callbackUrl=${encodeURIComponent(callbackUrl)}`
-          );
+          setRequires2FA(true);
         } else {
           setError(result.error);
         }
       } else if (result?.url) {
-        // Successful login
         router.push(result.url);
       }
     } catch (error: any) {
@@ -220,12 +212,12 @@ export default function LoginPage() {
             <div>
               <span className="text-gray-500">Admin:</span>
               <p>admin@pharmacy.com</p>
-              <p>Admin@123</p>
+              <p>password123</p>
             </div>
             <div>
               <span className="text-gray-500">Pharmacist:</span>
               <p>pharmacist@pharmacy.com</p>
-              <p>Admin@123</p>
+              <p>password123</p>
             </div>
           </div>
         </div>
