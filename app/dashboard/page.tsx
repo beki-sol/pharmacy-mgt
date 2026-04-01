@@ -45,7 +45,7 @@ export default function DashboardPage() {
         const [statsRes, salesRes, lowStockRes] = await Promise.all([
           fetch("/api/analytics?period=month"), // We'll create a summary endpoint or use analytics
           fetch("/api/sales?limit=5&sortBy=createdAt&sortOrder=desc"),
-          fetch("/api/drugs?lowStock=true&limit=5"),
+          fetch("/api/drug?lowStock=true&limit=5"),
         ]);
 
         const statsData = await statsRes.json();

@@ -10,6 +10,7 @@ import { Button } from "@/app/components/ui/Button";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
 import { Textarea } from "@/app/components/ui/Textarea";
+import { DrugSelect } from "@/app/components/ui/drug-select";
 import {
   Card,
   CardContent,
@@ -370,33 +371,17 @@ export default function NewSalePage() {
                   <div key={field.id} className="grid gap-4 p-4 border rounded-lg md:grid-cols-12 items-end">
                     {/* Drug Select */}
                     <div className="md:col-span-3 space-y-2">
-                      <Label>Drug *</Label>
-                      <Select
-                        onValueChange={(value) => {
-                          setValue(`items.${index}.drugId`, value);
-                          const selected = drugs.find((d) => d.id === value);
-                          if (selected) {
-                            setValue(`items.${index}.unitPrice`, selected.price);
-                          }
-                        }}
-                        defaultValue={field.drugId}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select drug" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {drugs.map((d) => (
-                            <SelectItem key={d.id} value={d.id}>
-                              {d.name} (Stock: {d.stock})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {errors.items?.[index]?.drugId && (
-                        <p className="text-sm text-destructive">{errors.items[index].drugId?.message}</p>
-                      )}
-                    </div>
-
+  <Label>Drug *</Label>
+  <DrugSelect
+    value={selectedDrugId}
+    onChange={(value, drug) => {
+      setValue(`items.${index}.drugId`, value);
+      setValue(`items.${index}.unitPrice`, drug.price);
+    }}
+    drugs={drugs}
+    error={errors.items?.[index]?.drugId?.message}
+  />
+</div>
                     {/* Quantity */}
                     <div className="md:col-span-2 space-y-2">
                       <Label>Qty *</Label>

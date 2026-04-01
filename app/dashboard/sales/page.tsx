@@ -37,10 +37,7 @@ export default function SalesPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
-  const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
-    from: addDays(new Date(), -30),
-    to: new Date(),
-  });
+  const [dateRange, setDateRange] = useState<{ from: Date; to: Date } | null>(null);
 
   useEffect(() => {
     const fetchSales = async () => {
@@ -51,8 +48,10 @@ export default function SalesPage() {
         search,
         ...(status && { status }),
         ...(paymentMethod && { paymentMethod }),
-        ...(dateRange.from && { startDate: dateRange.from.toISOString() }),
-        ...(dateRange.to && { endDate: dateRange.to.toISOString() }),
+        ...(dateRange && {
+          startDate: dateRange.from.toISOString(),
+          endDate: dateRange.to.toISOString(),
+        }),
       });
       try {
         const res = await fetch(`/api/sales?${params}`);
@@ -72,7 +71,7 @@ export default function SalesPage() {
     setSearch("");
     setStatus("");
     setPaymentMethod("");
-    setDateRange({ from: addDays(new Date(), -30), to: new Date() });
+    setDateRange(null);
     setPagination(prev => ({ ...prev, page: 1 }));
   };
 
@@ -150,7 +149,19 @@ export default function SalesPage() {
               </div>
               <div className="space-y-2">
                 <Label>Date Range</Label>
-                <DatePickerWithRange date={dateRange} setDate={setDateRange} />
+                <div className="flex gap-2">
+                  {dateRange && (
+                    <DatePickerWithRange date={dateRange} setDate={setDateRange} />
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDateRange({ from: addDays(new Date(), -30), to: new Date() })}
+                  >
+                    Last 30 Days
+                  </Button>
+                </div>
               </div>
             </div>
             <div className="flex justify-end mt-4">

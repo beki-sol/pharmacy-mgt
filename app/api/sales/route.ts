@@ -3,8 +3,9 @@ import { prisma } from "@/app/lib/prisma";
 import { z } from "zod";
 import { initializeChapaPayment } from "@/app/lib/chapa";
 import { sendTelegramToAdminGroup } from "@/app/service/telegram/service";
+import { auth } from "@/app/lib/auth"; // ✅ import auth
 
-// Validation schemas
+// Validation schemas (unchanged)
 const saleItemSchema = z.object({
   drugId: z.string(),
   quantity: z.number().int().positive("Quantity must be positive"),
@@ -47,24 +48,15 @@ const saleSchema = z.object({
     .optional(),
 });
 
-// Helper to get a default user ID (first admin) – for development without auth
-async function getDefaultUserId() {
-  const user = await prisma.user.findFirst({
-    where: { role: "ADMIN" },
-    select: { id: true },
-  });
-  if (!user) throw new Error("No admin user found – cannot create sale");
-  return user.id;
-}
-
-// GET - List sales (unchanged)
+// GET - List sales with pagination and filters
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
     const search = searchParams.get("search") || "";
-    const status = searchParams.get("status");
+    let status = searchParams.get("status");
+    let paymentMethod = searchParams.get("paymentMethod");   // ← add this
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
     const sortBy = searchParams.get("sortBy") || "createdAt";
@@ -73,6 +65,17 @@ export async function GET(request: NextRequest) {
     const skip = (page - 1) * limit;
     let where: any = {};
 
+    // ✅ Status filter
+    if (status && status !== "ALL") {
+      where.status = status;
+    }
+
+    // ✅ Payment method filter
+    if (paymentMethod && paymentMethod !== "ALL") {
+      where.paymentMethod = paymentMethod;
+    }
+
+    // Search filter (unchanged)
     if (search) {
       where.OR = [
         { invoiceNumber: { contains: search, mode: "insensitive" } },
@@ -81,7 +84,8 @@ export async function GET(request: NextRequest) {
         { customerEmail: { contains: search, mode: "insensitive" } },
       ];
     }
-    if (status) where.status = status;
+
+    // Date range filter (unchanged)
     if (startDate && endDate) {
       where.createdAt = {
         gte: new Date(startDate),
@@ -129,7 +133,13 @@ export async function GET(request: NextRequest) {
 // POST - Create a new sale with batch validation
 export async function POST(request: NextRequest) {
   try {
-    const userId = await getDefaultUserId();
+    // ✅ Authenticate the user
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const userId = session.user.id; // use the real user ID
+
     const body = await request.json();
     const data = saleSchema.parse({
       ...body,
@@ -162,7 +172,6 @@ export async function POST(request: NextRequest) {
       });
       if (!drug) throw new Error(`Drug with ID ${item.drugId} not found`);
 
-      // If batchId is provided, validate it
       if (item.batchId) {
         const batch = drug.batches.find(b => b.id === item.batchId);
         if (!batch) throw new Error(`Batch ${item.batchId} not found or empty for drug ${drug.name}`);
@@ -175,11 +184,9 @@ export async function POST(request: NextRequest) {
           throw new Error(`Batch ${batch.batchNumber} has expired`);
         }
       } else {
-        // If no batch selected but batches exist, require selection
         if (drug.batches.length > 0) {
           throw new Error(`Please select a batch for ${drug.name}`);
         }
-        // Fallback to total stock check if no batches
         if (drug.stock < item.quantity) {
           throw new Error(
             `Insufficient stock for ${drug.name}. Available: ${drug.stock}, Requested: ${item.quantity}`
@@ -205,7 +212,7 @@ export async function POST(request: NextRequest) {
         const newSale = await tx.sale.create({
           data: {
             invoiceNumber,
-            userId,
+            userId, // now using the real user ID
             customerName: data.customerName,
             customerPhone: data.customerPhone,
             customerEmail: data.customerEmail,
@@ -265,7 +272,6 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // Inventory log
           await tx.inventoryLog.create({
             data: {
               drugId: item.drugId,
@@ -274,7 +280,6 @@ export async function POST(request: NextRequest) {
               previousStock: drug.stock,
               newStock,
               saleId: newSale.id,
-             
               batchNumber: item.batchNumber,
               userId,
             },
@@ -340,7 +345,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(sale, { status: 201 });
     }
 
-    // --- Chapa payment flow (similar validation already done) ---
+    // --- Chapa payment flow ---
     else {
       const pendingSale = await prisma.sale.create({
         data: {
