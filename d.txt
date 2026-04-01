@@ -1,0 +1,388 @@
+
+select * from ""
+
+
+-- ===================================================================
+-- Pharmacy Inventory System – Full Data Population (Quoted Columns)
+-- ===================================================================
+
+BEGIN;
+
+-- 1. Branches
+INSERT INTO "Branch" (id, name, location, phone, email, "isActive", "createdAt", "updatedAt")
+VALUES
+  (gen_random_uuid()::text, 'Main Branch', 'Addis Ababa, Bole Road', '+251911111111', 'main@pharmacy.com', true, NOW(), NOW()),
+  (gen_random_uuid()::text, 'Branch 2', 'Addis Ababa, Mexico Square', '+251922222222', 'branch2@pharmacy.com', true, NOW(), NOW());
+
+-- 2. Users
+INSERT INTO "User" (
+  id, email, password, name, phone, role, "twoFactorEnabled", "isActive", 
+  "emailVerified", image, "createdAt", "updatedAt"
+) VALUES
+  (gen_random_uuid()::text, 'admin@pharmacy.com', 
+   '$2a$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW', -- password123
+   'Admin User', '+251911111111', 'ADMIN', false, true, NOW(), NULL, NOW(), NOW()),
+  (gen_random_uuid()::text, 'pharmacist@pharmacy.com',
+   '$2a$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW',
+   'John Pharmacist', '+251922222222', 'PHARMACIST', false, true, NOW(), NULL, NOW(), NOW()),
+  (gen_random_uuid()::text, 'assistant@pharmacy.com',
+   '$2a$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW',
+   'Lisa Assistant', '+251933333333', 'SALES_ASSISTANT', false, true, NOW(), NULL, NOW(), NOW());
+
+-- 3. User Branch assignments (many‑to‑many)
+WITH branch_ids AS (SELECT id, name FROM "Branch"),
+     user_ids AS (SELECT id, email FROM "User")
+INSERT INTO "UserBranch" ("userId", "branchId", "isDefault", "createdAt", "updatedAt")
+SELECT u.id, b.id,
+       CASE WHEN u.email = 'admin@pharmacy.com' AND b.name = 'Main Branch' THEN true
+            WHEN u.email = 'pharmacist@pharmacy.com' AND b.name = 'Main Branch' THEN true
+            ELSE false
+       END,
+       NOW(), NOW()
+FROM user_ids u, branch_ids b
+WHERE (u.email IN ('admin@pharmacy.com', 'pharmacist@pharmacy.com') AND b.name = 'Main Branch')
+   OR (u.email = 'assistant@pharmacy.com' AND b.name = 'Branch 2');
+
+-- 4. Suppliers
+INSERT INTO "Supplier" (id, name, company, "contactPerson", email, phone, address, "paymentTerms", "creditLimit", rating, "isActive", balance, "createdAt", "updatedAt")
+VALUES
+  (gen_random_uuid()::text, 'MediCorp Pharmaceuticals', 'MediCorp Inc.', 'Sarah Johnson', 'sarah@medicorp.com', '+251966666666', 'Addis Ababa, Bole Road', 'Net 30', 50000, 5, true, 0, NOW(), NOW()),
+  (gen_random_uuid()::text, 'Global Health Supplies', NULL, 'Michael Chen', 'michael@globalhealth.com', '+251988888888', NULL, 'Net 45', 75000, 5, true, 0, NOW(), NOW());
+
+-- 5. Drugs
+INSERT INTO "Drug" (
+  id, name, "genericName", brand, category, dosage, unit, price, "costPrice", 
+  stock, "minStockLevel", "maxStockLevel", "reorderPoint", 
+  barcode, description, "storageCondition", "isActive", "createdAt", "updatedAt", "supplierId"
+) VALUES
+  (gen_random_uuid()::text, 'Amoxicillin', 'Amoxicillin', 'Amoxil', 'Antibiotic',
+   '500mg', 'capsule', 12.50, 8.00, 0, 50, 500, 75,
+   '1234567890123', 'Antibiotic for bacterial infections', 'Store below 25°C', true,
+   NOW(), NOW(), (SELECT id FROM "Supplier" WHERE name = 'MediCorp Pharmaceuticals')),
+  (gen_random_uuid()::text, 'Ibuprofen', 'Ibuprofen', 'Advil', 'Pain Relief',
+   '400mg', 'tablet', 5.00, 2.50, 0, 100, 1000, 150,
+   '1234567890124', 'Pain reliever and fever reducer', 'Store in a cool dry place', true,
+   NOW(), NOW(), (SELECT id FROM "Supplier" WHERE name = 'MediCorp Pharmaceuticals')),
+  (gen_random_uuid()::text, 'Paracetamol', 'Acetaminophen', 'Panadol', 'Pain Relief',
+   '500mg', 'tablet', 3.00, 1.20, 0, 200, 2000, 250,
+   '1234567890125', 'Mild pain and fever', 'Room temperature', true,
+   NOW(), NOW(), (SELECT id FROM "Supplier" WHERE name = 'Global Health Supplies')),
+  (gen_random_uuid()::text, 'Lisinopril', 'Lisinopril', 'Zestril', 'Cardiovascular',
+   '10mg', 'tablet', 15.00, 9.00, 0, 30, 300, 50,
+   '1234567890126', 'Blood pressure medication', 'Store at room temperature', true,
+   NOW(), NOW(), (SELECT id FROM "Supplier" WHERE name = 'Global Health Supplies')),
+  (gen_random_uuid()::text, 'Metformin', 'Metformin', 'Glucophage', 'Diabetes',
+   '850mg', 'tablet', 8.50, 4.00, 0, 40, 400, 60,
+   '1234567890127', 'Diabetes medication', 'Store below 30°C', true,
+   NOW(), NOW(), (SELECT id FROM "Supplier" WHERE name = 'MediCorp Pharmaceuticals'));
+
+-- 6. Branch‑specific drug stock (DrugBranch)
+WITH drugs AS (SELECT id, name FROM "Drug"),
+     branches AS (SELECT id, name FROM "Branch")
+INSERT INTO "DrugBranch" ("drugId", "branchId", stock, "minStockLevel", "maxStockLevel", "reorderPoint", "isActive", "createdAt", "updatedAt")
+SELECT d.id, b.id,
+       CASE
+         WHEN b.name = 'Main Branch' THEN 
+           CASE d.name
+             WHEN 'Amoxicillin' THEN 150
+             WHEN 'Ibuprofen' THEN 300
+             WHEN 'Paracetamol' THEN 500
+             WHEN 'Lisinopril' THEN 200
+             WHEN 'Metformin' THEN 180
+           END
+         ELSE -- Branch 2
+           CASE d.name
+             WHEN 'Amoxicillin' THEN 80
+             WHEN 'Ibuprofen' THEN 120
+             WHEN 'Paracetamol' THEN 250
+             WHEN 'Lisinopril' THEN 100
+             WHEN 'Metformin' THEN 90
+           END
+       END AS stock,
+       10, 500, 20, true, NOW(), NOW()
+FROM drugs d, branches b;
+
+-- 7. Batches for each drug in each branch (2 batches per drug per branch)
+DO $$
+DECLARE
+  drug_rec RECORD;
+  branch_rec RECORD;
+  batch_num INT;
+  qty_per_batch INT;
+BEGIN
+  FOR drug_rec IN SELECT id, name FROM "Drug" LOOP
+    FOR branch_rec IN SELECT id, name FROM "Branch" LOOP
+      SELECT stock INTO qty_per_batch 
+      FROM "DrugBranch" 
+      WHERE "drugId" = drug_rec.id AND "branchId" = branch_rec.id;
+      IF qty_per_batch IS NULL THEN
+        CONTINUE;
+      END IF;
+      FOR batch_num IN 1..2 LOOP
+        INSERT INTO "DrugBatch" (
+          id, "drugId", "branchId", "batchNumber", "expiryDate", quantity, remaining, "costPrice", "createdAt"
+        ) VALUES (
+          gen_random_uuid()::text,
+          drug_rec.id,
+          branch_rec.id,
+          'BATCH-' || branch_rec.name || '-' || drug_rec.name || '-' || batch_num,
+          NOW() + (CASE WHEN batch_num = 1 THEN INTERVAL '2 years' ELSE INTERVAL '1 year' END),
+          qty_per_batch / 2,
+          qty_per_batch / 2,
+          (SELECT "costPrice" FROM "Drug" WHERE id = drug_rec.id),
+          NOW()
+        );
+      END LOOP;
+    END LOOP;
+  END LOOP;
+END $$;
+
+-- 8. Purchase Orders (one for each branch, from different suppliers)
+WITH branches AS (SELECT id FROM "Branch")
+INSERT INTO "PurchaseOrder" (
+  id, "orderNumber", "supplierId", "branchId", "totalAmount", status, "orderDate", "expectedDelivery", "receivedDate", notes
+)
+SELECT
+  gen_random_uuid()::text,
+  'PO-' || branch.id || '-1',
+  (SELECT id FROM "Supplier" ORDER BY random() LIMIT 1),
+  branch.id,
+  5000 + random() * 10000,
+  'DELIVERED',
+  NOW() - INTERVAL '30 days',
+  NOW() - INTERVAL '20 days',
+  NOW() - INTERVAL '15 days',
+  'Initial stock order'
+FROM branches branch
+UNION ALL
+SELECT
+  gen_random_uuid()::text,
+  'PO-' || branch.id || '-2',
+  (SELECT id FROM "Supplier" ORDER BY random() LIMIT 1),
+  branch.id,
+  3000 + random() * 5000,
+  'PENDING',
+  NOW() - INTERVAL '5 days',
+  NOW() + INTERVAL '5 days',
+  NULL,
+  'Reorder'
+FROM branches branch;
+
+-- 9. Purchase Items (for each delivered order, add items from drugs available in that branch)
+WITH po_delivered AS (
+  SELECT id, "branchId" FROM "PurchaseOrder" WHERE status = 'DELIVERED'
+)
+INSERT INTO "PurchaseItem" (
+  id, "purchaseOrderId", "drugId", quantity, "unitCost", "batchNumber", "expiryDate"
+)
+SELECT
+  gen_random_uuid()::text,
+  po.id,
+  d.id,
+  floor(random() * 100 + 20)::int,
+  d."costPrice" * (0.9 + random() * 0.2), -- some markup
+  'BATCH-PO-' || po.id || '-' || d.name,
+  NOW() + INTERVAL '1 year' + (random() * INTERVAL '1 year')
+FROM po_delivered po
+CROSS JOIN LATERAL (
+  SELECT id, name, "costPrice" FROM "Drug" d WHERE d.id IN (SELECT "drugId" FROM "DrugBranch" WHERE "branchId" = po."branchId")
+  ORDER BY random() LIMIT 3
+) d;
+
+-- 10. Inventory Logs for purchase orders (PURCHASE)
+-- 10. Inventory Logs for purchase orders (PURCHASE)
+INSERT INTO "InventoryLog" (
+  id, "drugId", "branchId", type, quantity, "previousStock", "newStock", "purchaseOrderId", "batchNumber", "userId", "createdAt"
+)
+SELECT
+  gen_random_uuid()::text,
+  pi."drugId",
+  po."branchId",
+  'PURCHASE'::"InventoryAction",
+  pi.quantity,
+  COALESCE(db.stock, 0) - pi.quantity,
+  COALESCE(db.stock, 0),
+  po.id,
+  pi."batchNumber",
+  (SELECT id FROM "User" WHERE email = 'admin@pharmacy.com'),
+  po."receivedDate"
+FROM "PurchaseOrder" po
+JOIN "PurchaseItem" pi ON pi."purchaseOrderId" = po.id
+LEFT JOIN "DrugBranch" db ON db."drugId" = pi."drugId" AND db."branchId" = po."branchId"
+WHERE po.status = 'DELIVERED';
+
+-- 11. Update DrugBranch stock after purchase orders (increase stock)
+UPDATE "DrugBranch" db
+SET stock = db.stock + sub.total_added
+FROM (
+  SELECT po."branchId", pi."drugId", SUM(pi.quantity) AS total_added
+  FROM "PurchaseOrder" po
+  JOIN "PurchaseItem" pi ON pi."purchaseOrderId" = po.id
+  WHERE po.status = 'DELIVERED'
+  GROUP BY po."branchId", pi."drugId"
+) sub
+WHERE db."branchId" = sub."branchId" AND db."drugId" = sub."drugId";
+
+-- 12. Sales (create 5 completed sales per branch and 1 pending)
+WITH branches AS (SELECT id FROM "Branch")
+INSERT INTO "Sale" (
+  id, "invoiceNumber", "userId", "branchId", "customerName", "customerPhone", "totalAmount", discount, tax, "netAmount", "paymentMethod", status, "createdAt", "updatedAt"
+)
+SELECT
+  gen_random_uuid()::text,
+  'INV-' || branch.id || '-' || seq,
+  (SELECT id FROM "User" WHERE email = 'admin@pharmacy.com'),
+  branch.id,
+  'Customer ' || seq,
+  '+2519' || (floor(random() * 90000000)::int + 10000000),
+  0, 0, 0, 0,
+  CASE WHEN random() > 0.7 THEN 'CARD' ELSE 'CASH' END,
+  CASE WHEN seq <= 5 THEN 'COMPLETED'::"SaleStatus" ELSE 'PENDING'::"SaleStatus" END,
+  NOW() - (random() * INTERVAL '30 days'),
+  NOW() - (random() * INTERVAL '30 days')
+FROM branches branch
+CROSS JOIN generate_series(1, 6) AS seq;
+
+-- 13. Sale Items (for completed sales, pick random drugs from the same branch)
+WITH completed_sales AS (
+  SELECT id, "branchId" FROM "Sale" WHERE status = 'COMPLETED'
+)
+INSERT INTO "SaleItem" (
+  id, "saleId", "drugId", quantity, "unitPrice", discount, tax, subtotal, "batchId", "batchNumber"
+)
+SELECT
+  gen_random_uuid()::text,
+  s.id,
+  d.id,
+  floor(random() * 5 + 1)::int,
+  d.price,
+  0,
+  0,
+  0, -- will update later
+  (SELECT id FROM "DrugBatch" WHERE "drugId" = d.id AND "branchId" = s."branchId" LIMIT 1),
+  NULL
+FROM completed_sales s
+CROSS JOIN LATERAL (
+  SELECT id, price, name FROM "Drug" d WHERE d.id IN (SELECT "drugId" FROM "DrugBranch" WHERE "branchId" = s."branchId")
+  ORDER BY random() LIMIT floor(random() * 3 + 1)::int
+) d;
+
+-- 14. Update sale items subtotal and update sale totals
+UPDATE "SaleItem" si
+SET subtotal = si.quantity * si."unitPrice" - si.discount;
+
+UPDATE "Sale" s
+SET "totalAmount" = (
+    SELECT COALESCE(SUM(subtotal), 0) FROM "SaleItem" WHERE "saleId" = s.id
+  ),
+  "netAmount" = (
+    SELECT COALESCE(SUM(subtotal), 0) FROM "SaleItem" WHERE "saleId" = s.id
+  ) - s.discount + s.tax
+WHERE s.status = 'COMPLETED';
+
+-- 15. Inventory Logs for sales (SALE)
+
+INSERT INTO "InventoryLog" (
+  id, "drugId", "branchId", type, quantity, "previousStock", "newStock", "saleId", "batchNumber", "userId", "createdAt"
+)
+SELECT
+  gen_random_uuid()::text,
+  si."drugId",
+  s."branchId",
+  'SALE'::"InventoryAction",
+  -si.quantity,
+  db.stock + si.quantity,
+  db.stock,
+  s.id,
+  si."batchNumber",
+  (SELECT id FROM "User" WHERE email = 'admin@pharmacy.com'),
+  s."createdAt"
+FROM "Sale" s
+JOIN "SaleItem" si ON si."saleId" = s.id
+JOIN "DrugBranch" db ON db."drugId" = si."drugId" AND db."branchId" = s."branchId"
+WHERE s.status = 'COMPLETED';
+
+-- 16. Update DrugBranch stock after sales (decrease)
+UPDATE "DrugBranch" db
+SET stock = db.stock - sub.total_sold
+FROM (
+  SELECT s."branchId", si."drugId", SUM(si.quantity) AS total_sold
+  FROM "Sale" s
+  JOIN "SaleItem" si ON si."saleId" = s.id
+  WHERE s.status = 'COMPLETED'
+  GROUP BY s."branchId", si."drugId"
+) sub
+WHERE db."branchId" = sub."branchId" AND db."drugId" = sub."drugId";
+
+-- 17. Update batch remaining after sales
+UPDATE "DrugBatch" b
+SET remaining = b.remaining - sub.sold_qty
+FROM (
+  SELECT si."batchId", SUM(si.quantity) AS sold_qty
+  FROM "SaleItem" si
+  JOIN "Sale" s ON si."saleId" = s.id
+  WHERE s.status = 'COMPLETED' AND si."batchId" IS NOT NULL
+  GROUP BY si."batchId"
+) sub
+WHERE b.id = sub."batchId";
+
+-- 18. Notifications (low stock alerts based on updated stock)
+INSERT INTO "Notification" (
+  id, "userId", title, message, type, "isRead", "createdAt"
+)
+SELECT
+  gen_random_uuid()::text,
+  u.id,
+  'Low Stock Alert',
+  'Drug ' || d.name || ' is below minimum stock level in ' || b.name || '. Current: ' || db.stock || ', Min: ' || db."minStockLevel",
+  'WARNING',
+  false,
+  NOW()
+FROM "DrugBranch" db
+JOIN "Drug" d ON d.id = db."drugId"
+JOIN "Branch" b ON b.id = db."branchId"
+CROSS JOIN (SELECT id FROM "User" WHERE email = 'admin@pharmacy.com') u
+WHERE db.stock <= db."minStockLevel"
+LIMIT 5;
+
+-- 19. Expenses (some sample)
+INSERT INTO "Expense" (
+  id, category, description, amount, date, "approvedBy", "createdAt"
+)
+VALUES
+  (gen_random_uuid()::text, 'RENT', 'Monthly rent for Main Branch', 15000, NOW() - INTERVAL '15 days', (SELECT id FROM "User" WHERE email = 'admin@pharmacy.com'), NOW()),
+  (gen_random_uuid()::text, 'UTILITIES', 'Electricity bill', 3500, NOW() - INTERVAL '10 days', NULL, NOW()),
+  (gen_random_uuid()::text, 'SALARY', 'Staff salaries', 45000, NOW() - INTERVAL '5 days', (SELECT id FROM "User" WHERE email = 'admin@pharmacy.com'), NOW());
+
+-- 20. Audit Logs (some sample actions)
+INSERT INTO "AuditLog" (
+  id, "userId", action, entity, "entityId", "ipAddress", "userAgent", "createdAt"
+)
+VALUES
+  (gen_random_uuid()::text, (SELECT id FROM "User" WHERE email = 'admin@pharmacy.com'), 'LOGIN', 'User', (SELECT id FROM "User" WHERE email = 'admin@pharmacy.com'), '127.0.0.1', 'Mozilla/5.0', NOW()),
+  (gen_random_uuid()::text, (SELECT id FROM "User" WHERE email = 'pharmacist@pharmacy.com'), 'CREATE', 'Sale', (SELECT id FROM "Sale" LIMIT 1), '192.168.1.1', 'Chrome', NOW());
+
+-- 21. Drafts (sample)
+INSERT INTO "Draft" (
+  id, "sessionId", data, "createdAt", "updatedAt"
+)
+VALUES (
+  gen_random_uuid()::text,
+  'test-session-123',
+  '{"items":[{"drugId":"some-id","quantity":2,"unitPrice":5.00}],"customerName":"Draft Customer"}',
+  NOW(),
+  NOW()
+);
+
+COMMIT;
+
+-- Verification queries (optional)
+-- SELECT 'Users' as table, COUNT(*) FROM "User" UNION ALL
+-- SELECT 'Branches', COUNT(*) FROM "Branch" UNION ALL
+-- SELECT 'Drugs', COUNT(*) FROM "Drug" UNION ALL
+-- SELECT 'DrugBranch', COUNT(*) FROM "DrugBranch" UNION ALL
+-- SELECT 'DrugBatch', COUNT(*) FROM "DrugBatch" UNION ALL
+-- SELECT 'Sales', COUNT(*) FROM "Sale" UNION ALL
+-- SELECT 'SaleItems', COUNT(*) FROM "SaleItem" UNION ALL
+-- SELECT 'PurchaseOrders', COUNT(*) FROM "PurchaseOrder" UNION ALL
+-- SELECT 'InventoryLogs', COUNT(*) FROM "InventoryLog";
