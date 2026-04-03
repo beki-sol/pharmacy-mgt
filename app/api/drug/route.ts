@@ -1,3 +1,4 @@
+// app/api/drug/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/app/lib/prisma";
@@ -82,6 +83,13 @@ export async function GET(request: NextRequest) {
     prisma.drug.count({ where }),
   ]);
 
+  // Transform drugs to include a plain category string
+  const transformedDrugs = drugs.map(drug => ({
+    ...drug,
+    category: drug.category?.name || null,   // replaces the category object with its name
+    categoryId: drug.categoryId,             // keep the ID if needed
+  }));
+
   const lowStockDrugs = await prisma.$queryRaw<{ id: string; name: string; stock: number; minStockLevel: number }[]>`
     SELECT id, name, stock, "minStockLevel"
     FROM "Drug"
@@ -98,7 +106,7 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json({
-    drugs,
+    drugs: transformedDrugs,
     pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     alerts: { lowStock: lowStockDrugs, expired: expiredDrugs },
   });

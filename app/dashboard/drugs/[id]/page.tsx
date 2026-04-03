@@ -8,9 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/Ca
 import { Badge } from "@/app/components/ui/Badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/app/components/ui/Table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/Tabs";
-import { Separator } from "@/app/components/ui/Separator";
 import { formatCurrency, formatDate } from "@/app/lib/utils";
-import { ArrowLeft, Edit, Package, Truck, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Edit, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
 
@@ -28,7 +27,7 @@ interface Drug {
   name: string;
   genericName: string | null;
   brand: string | null;
-  category: string;
+  category: string | { name: string };
   dosage: string;
   unit: string;
   price: number;
@@ -37,7 +36,7 @@ interface Drug {
   minStockLevel: number;
   maxStockLevel: number;
   reorderPoint: number;
-  expiryDate: string | null;
+  expiryDate: string | null;        // drug‑level expiry (may be ignored if batches exist)
   batchNumber: string | null;
   barcode: string | null;
   description: string | null;
@@ -54,6 +53,40 @@ interface Drug {
     email: string | null;
   } | null;
   batches: Batch[];
+}
+
+function getCategoryName(category: Drug['category']): string {
+  if (!category) return '—';
+  if (typeof category === 'string') return category.replace(/_/g, ' ');
+  return category.name?.replace(/_/g, ' ') || '—';
+}
+
+// Helper to get the earliest expiry date among batches (if any), else drug's own expiry
+function getEffectiveExpiryDate(drug: Drug): string | null {
+  if (drug.batches && drug.batches.length > 0) {
+    // Find the earliest expiry date among batches with remaining > 0
+    const validBatches = drug.batches.filter(b => b.remaining > 0);
+    if (validBatches.length === 0) return null;
+    const earliest = validBatches.reduce((earliest, batch) =>
+      new Date(batch.expiryDate) < new Date(earliest.expiryDate) ? batch : earliest
+    );
+    return earliest.expiryDate;
+  }
+  return drug.expiryDate;
+}
+
+function getExpiryStatus(expiryDate: string | null) {
+  if (!expiryDate) return { label: "No Expiry", variant: "secondary" };
+  const daysUntil = (new Date(expiryDate).getTime() - Date.now()) / (1000 * 3600 * 24);
+  if (daysUntil < 0) return { label: "Expired", variant: "destructive" };
+  if (daysUntil < 30) return { label: "Expires Soon", variant: "warning" };
+  return { label: "Valid", variant: "success" };
+}
+
+function getStockStatus(stock: number, min: number) {
+  if (stock === 0) return { label: "Out of Stock", variant: "destructive" };
+  if (stock <= min) return { label: "Low Stock", variant: "warning" };
+  return { label: "In Stock", variant: "success" };
 }
 
 export default function DrugViewPage() {
@@ -85,20 +118,6 @@ export default function DrugViewPage() {
     fetchDrug();
   }, [id]);
 
-  const getStockStatus = (stock: number, min: number) => {
-    if (stock === 0) return { label: "Out of Stock", variant: "destructive" };
-    if (stock <= min) return { label: "Low Stock", variant: "warning" };
-    return { label: "In Stock", variant: "success" };
-  };
-
-  const getExpiryStatus = (expiryDate: string | null) => {
-    if (!expiryDate) return { label: "No Expiry", variant: "secondary" };
-    const daysUntil = (new Date(expiryDate).getTime() - Date.now()) / (1000 * 3600 * 24);
-    if (daysUntil < 0) return { label: "Expired", variant: "destructive" };
-    if (daysUntil < 30) return { label: "Expires Soon", variant: "warning" };
-    return { label: "Valid", variant: "success" };
-  };
-
   if (loading) {
     return (
       <>
@@ -125,14 +144,16 @@ export default function DrugViewPage() {
     );
   }
 
+  const effectiveExpiryDate = getEffectiveExpiryDate(drug);
+  const expiryStatus = getExpiryStatus(effectiveExpiryDate);
   const stockStatus = getStockStatus(drug.stock, drug.minStockLevel);
-  const expiryStatus = getExpiryStatus(drug.expiryDate);
+  const categoryName = getCategoryName(drug.category);
 
   return (
     <>
       <Header
         title={drug.name}
-        subtitle={`${drug.genericName ? drug.genericName + ' · ' : ''}${drug.category.replace(/_/g, ' ')}`}
+        subtitle={`${drug.genericName ? drug.genericName + ' · ' : ''}${categoryName}`}
         actions={
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => router.back()}>
@@ -168,7 +189,7 @@ export default function DrugViewPage() {
             <CardContent>
               <Badge variant={expiryStatus.variant as any}>{expiryStatus.label}</Badge>
               <p className="text-lg font-medium mt-2">
-                {drug.expiryDate ? formatDate(drug.expiryDate) : "—"}
+                {effectiveExpiryDate ? formatDate(effectiveExpiryDate) : "—"}
               </p>
             </CardContent>
           </Card>
@@ -192,7 +213,7 @@ export default function DrugViewPage() {
           </Card>
         </div>
 
-        {/* Tabs for Details and Batches */}
+        {/* Tabs */}
         <Tabs defaultValue="details">
           <TabsList>
             <TabsTrigger value="details">Details</TabsTrigger>
@@ -204,38 +225,14 @@ export default function DrugViewPage() {
                 <CardTitle>Basic Information</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <p className="text-sm text-muted-foreground">Name</p>
-                  <p className="font-medium">{drug.name}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Generic Name</p>
-                  <p>{drug.genericName || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Brand</p>
-                  <p>{drug.brand || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Category</p>
-                  <p>{drug.category.replace(/_/g, " ")}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Dosage</p>
-                  <p>{drug.dosage}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Unit</p>
-                  <p>{drug.unit}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Barcode</p>
-                  <p>{drug.barcode || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Batch Number</p>
-                  <p>{drug.batchNumber || "—"}</p>
-                </div>
+                <div><p className="text-sm text-muted-foreground">Name</p><p className="font-medium">{drug.name}</p></div>
+                <div><p className="text-sm text-muted-foreground">Generic Name</p><p>{drug.genericName || "—"}</p></div>
+                <div><p className="text-sm text-muted-foreground">Brand</p><p>{drug.brand || "—"}</p></div>
+                <div><p className="text-sm text-muted-foreground">Category</p><p>{categoryName}</p></div>
+                <div><p className="text-sm text-muted-foreground">Dosage</p><p>{drug.dosage}</p></div>
+                <div><p className="text-sm text-muted-foreground">Unit</p><p>{drug.unit}</p></div>
+                <div><p className="text-sm text-muted-foreground">Barcode</p><p>{drug.barcode || "—"}</p></div>
+                <div><p className="text-sm text-muted-foreground">Batch Number</p><p>{drug.batchNumber || "—"}</p></div>
               </CardContent>
             </Card>
 
@@ -246,22 +243,10 @@ export default function DrugViewPage() {
               <CardContent className="grid gap-4 md:grid-cols-2">
                 {drug.supplier ? (
                   <>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Name</p>
-                      <p className="font-medium">{drug.supplier.name}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Company</p>
-                      <p>{drug.supplier.company || "—"}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Phone</p>
-                      <p>{drug.supplier.phone || "—"}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Email</p>
-                      <p>{drug.supplier.email || "—"}</p>
-                    </div>
+                    <div><p className="text-sm text-muted-foreground">Name</p><p className="font-medium">{drug.supplier.name}</p></div>
+                    <div><p className="text-sm text-muted-foreground">Company</p><p>{drug.supplier.company || "—"}</p></div>
+                    <div><p className="text-sm text-muted-foreground">Phone</p><p>{drug.supplier.phone || "—"}</p></div>
+                    <div><p className="text-sm text-muted-foreground">Email</p><p>{drug.supplier.email || "—"}</p></div>
                   </>
                 ) : (
                   <p className="text-muted-foreground">No supplier assigned</p>
@@ -271,28 +256,11 @@ export default function DrugViewPage() {
 
             {(drug.description || drug.sideEffects || drug.storageCondition) && (
               <Card>
-                <CardHeader>
-                  <CardTitle>Additional Information</CardTitle>
-                </CardHeader>
+                <CardHeader><CardTitle>Additional Information</CardTitle></CardHeader>
                 <CardContent className="space-y-4">
-                  {drug.description && (
-                    <div>
-                      <p className="text-sm text-muted-foreground">Description</p>
-                      <p>{drug.description}</p>
-                    </div>
-                  )}
-                  {drug.sideEffects && (
-                    <div>
-                      <p className="text-sm text-muted-foreground">Side Effects</p>
-                      <p>{drug.sideEffects}</p>
-                    </div>
-                  )}
-                  {drug.storageCondition && (
-                    <div>
-                      <p className="text-sm text-muted-foreground">Storage Conditions</p>
-                      <p>{drug.storageCondition}</p>
-                    </div>
-                  )}
+                  {drug.description && <div><p className="text-sm text-muted-foreground">Description</p><p>{drug.description}</p></div>}
+                  {drug.sideEffects && <div><p className="text-sm text-muted-foreground">Side Effects</p><p>{drug.sideEffects}</p></div>}
+                  {drug.storageCondition && <div><p className="text-sm text-muted-foreground">Storage Conditions</p><p>{drug.storageCondition}</p></div>}
                 </CardContent>
               </Card>
             )}
@@ -300,9 +268,7 @@ export default function DrugViewPage() {
 
           <TabsContent value="batches">
             <Card>
-              <CardHeader>
-                <CardTitle>Batches</CardTitle>
-              </CardHeader>
+              <CardHeader><CardTitle>Batches</CardTitle></CardHeader>
               <CardContent>
                 {drug.batches.length === 0 ? (
                   <p className="text-center text-muted-foreground py-4">No batches found</p>
@@ -315,18 +281,27 @@ export default function DrugViewPage() {
                         <TableHead>Quantity</TableHead>
                         <TableHead>Remaining</TableHead>
                         <TableHead>Cost Price</TableHead>
+                        <TableHead>Status</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {drug.batches.map((batch) => (
-                        <TableRow key={batch.id}>
-                          <TableCell className="font-mono">{batch.batchNumber}</TableCell>
-                          <TableCell>{formatDate(batch.expiryDate)}</TableCell>
-                          <TableCell>{batch.quantity}</TableCell>
-                          <TableCell>{batch.remaining}</TableCell>
-                          <TableCell>{formatCurrency(batch.costPrice)}</TableCell>
-                        </TableRow>
-                      ))}
+                      {drug.batches.map((batch) => {
+                        const batchExpiryStatus = getExpiryStatus(batch.expiryDate);
+                        return (
+                          <TableRow key={batch.id}>
+                            <TableCell className="font-mono">{batch.batchNumber}</TableCell>
+                            <TableCell>{formatDate(batch.expiryDate)}</TableCell>
+                            <TableCell>{batch.quantity}</TableCell>
+                            <TableCell>{batch.remaining}</TableCell>
+                            <TableCell>{formatCurrency(batch.costPrice)}</TableCell>
+                            <TableCell>
+                              <Badge variant={batchExpiryStatus.variant as any}>
+                                {batchExpiryStatus.label}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 )}

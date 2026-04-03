@@ -1,27 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { z } from "zod";
+import { auth } from "@/app/lib/auth";
 
-// Helper to get default user ID (first admin) – for development without auth
-async function getDefaultUserId() {
-  const user = await prisma.user.findFirst({
-    where: { role: "ADMIN" },
-    select: { id: true },
-  });
-  if (!user) throw new Error("No admin user found – cannot process refund");
-  return user.id;
-}
-
-export async function POST(
+export const POST = async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   try {
-    const userId = await getDefaultUserId();
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const userId = session.user.id;
     const { id } = await params;
-    const { reason } = await request.json(); // optional reason for refund
+    const { reason } = await request.json();
 
-    // Fetch the sale with its items and batches
     const sale = await prisma.sale.findUnique({
       where: { id },
       include: {
@@ -37,8 +30,6 @@ export async function POST(
     if (!sale) {
       return NextResponse.json({ error: "Sale not found" }, { status: 404 });
     }
-
-    // Only allow refund of completed sales
     if (sale.status !== "COMPLETED") {
       return NextResponse.json(
         { error: "Only completed sales can be refunded" },
@@ -46,42 +37,36 @@ export async function POST(
       );
     }
 
-    // Perform refund in a transaction
     await prisma.$transaction(async (tx) => {
-      // 1. Restore stock and batch remaining for each sale item
       for (const item of sale.saleItems) {
         // Restore drug stock
         await tx.drug.update({
           where: { id: item.drugId },
           data: { stock: { increment: item.quantity } },
         });
-
-        // If a batch was used, restore its remaining quantity
+        // Restore batch remaining if batch exists
         if (item.batchId) {
           await tx.drugBatch.update({
             where: { id: item.batchId },
             data: { remaining: { increment: item.quantity } },
           });
         }
-
-        // Create inventory log for the return
+        // Create inventory log (without batchId)
         await tx.inventoryLog.create({
           data: {
             drugId: item.drugId,
             type: "RETURN",
-            quantity: item.quantity, // positive because it's added back
-            previousStock: item.drug.stock, // old stock before refund
+            quantity: item.quantity,
+            previousStock: item.drug.stock,
             newStock: item.drug.stock + item.quantity,
             saleId: sale.id,
-            //batchId: item.batchId,
             batchNumber: item.batchNumber,
             notes: `Refund for sale ${sale.invoiceNumber}` + (reason ? `: ${reason}` : ""),
             userId,
           },
         });
       }
-
-      // 2. Create a refund payment record (positive amount, but marked as refund)
+      // Create refund payment
       await tx.payment.create({
         data: {
           saleId: sale.id,
@@ -92,20 +77,29 @@ export async function POST(
           paidAt: new Date(),
         },
       });
-
-      // 3. Update sale status to REFUNDED
+      // Update sale status
       await tx.sale.update({
         where: { id: sale.id },
         data: { status: "REFUNDED" },
       });
-
-      // 4. Optionally create an audit log (if you have an AuditLog model)
-      // await tx.auditLog.create({ ... });
+      // Create audit log
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: "REFUND",
+          entity: "Sale",
+          entityId: sale.id,
+          oldData: { status: sale.status },
+          newData: { status: "REFUNDED" },
+          ipAddress: request.headers.get("x-forwarded-for") || "unknown",
+          userAgent: request.headers.get("user-agent") || "unknown",
+        },
+      });
     });
 
     return NextResponse.json({ success: true, message: "Sale refunded successfully" });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Refund error:", error);
     return NextResponse.json({ error: "Failed to process refund" }, { status: 500 });
   }
-}
+};

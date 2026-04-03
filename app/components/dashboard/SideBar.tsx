@@ -23,6 +23,7 @@ import {
   AlertCircle,
   Bell,
   User,
+  Tags, // ← import Tags icon for categories
 } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { Button } from "@/app/components/ui/Button";
@@ -33,6 +34,7 @@ const navigation = [
   { name: "Sales", href: "/dashboard/sales", icon: ShoppingCart },
   { name: "Inventory", href: "/dashboard/inventory", icon: Package },
   { name: "Suppliers", href: "/dashboard/suppliers", icon: Truck },
+  { name: "Categories", href: "/dashboard/categories", icon: Tags }, // ← new entry
   { name: "Prescriptions", href: "/dashboard/prescriptions", icon: ClipboardCheck },
   { name: "Users", href: "/dashboard/admin/users", icon: Users },
   { name: "Customers", href: "/dashboard/customers", icon: Users },

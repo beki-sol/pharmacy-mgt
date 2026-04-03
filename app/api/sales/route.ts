@@ -3,9 +3,9 @@ import { prisma } from "@/app/lib/prisma";
 import { z } from "zod";
 import { initializeChapaPayment } from "@/app/lib/chapa";
 import { sendTelegramToAdminGroup } from "@/app/service/telegram/service";
-import { auth } from "@/app/lib/auth"; // ✅ import auth
+import { auth } from "@/app/lib/auth";
 
-// Validation schemas (unchanged)
+// Validation schemas
 const saleItemSchema = z.object({
   drugId: z.string(),
   quantity: z.number().int().positive("Quantity must be positive"),
@@ -48,7 +48,7 @@ const saleSchema = z.object({
     .optional(),
 });
 
-// GET - List sales with pagination and filters
+// GET - List sales (unchanged except payment method filter)
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "10");
     const search = searchParams.get("search") || "";
     let status = searchParams.get("status");
-    let paymentMethod = searchParams.get("paymentMethod");   // ← add this
+    let paymentMethod = searchParams.get("paymentMethod");
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
     const sortBy = searchParams.get("sortBy") || "createdAt";
@@ -65,17 +65,9 @@ export async function GET(request: NextRequest) {
     const skip = (page - 1) * limit;
     let where: any = {};
 
-    // ✅ Status filter
-    if (status && status !== "ALL") {
-      where.status = status;
-    }
+    if (status && status !== "ALL") where.status = status;
+    if (paymentMethod && paymentMethod !== "ALL") where.paymentMethod = paymentMethod;
 
-    // ✅ Payment method filter
-    if (paymentMethod && paymentMethod !== "ALL") {
-      where.paymentMethod = paymentMethod;
-    }
-
-    // Search filter (unchanged)
     if (search) {
       where.OR = [
         { invoiceNumber: { contains: search, mode: "insensitive" } },
@@ -85,12 +77,8 @@ export async function GET(request: NextRequest) {
       ];
     }
 
-    // Date range filter (unchanged)
     if (startDate && endDate) {
-      where.createdAt = {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
-      };
+      where.createdAt = { gte: new Date(startDate), lte: new Date(endDate) };
     }
 
     const [sales, total] = await Promise.all([
@@ -130,15 +118,14 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Create a new sale with batch validation
+// POST - Create sale with strict expiry checks
 export async function POST(request: NextRequest) {
   try {
-    // ✅ Authenticate the user
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const userId = session.user.id; // use the real user ID
+    const userId = session.user.id;
 
     const body = await request.json();
     const data = saleSchema.parse({
@@ -153,13 +140,17 @@ export async function POST(request: NextRequest) {
       tax: parseFloat(body.tax || 0),
     });
 
-    // Generate invoice number
     const invoiceNumber = `INV-${Date.now().toString().slice(-8)}-${Math.random()
       .toString(36)
       .substring(2, 6)
       .toUpperCase()}`;
 
-    // Validate each item's stock and batch
+    // ---------- VALIDATION (expiry and stock) ----------
+    // Get today's date without time (UTC)
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+
     for (const item of data.items) {
       const drug = await prisma.drug.findUnique({
         where: { id: item.drugId },
@@ -175,17 +166,32 @@ export async function POST(request: NextRequest) {
       if (item.batchId) {
         const batch = drug.batches.find(b => b.id === item.batchId);
         if (!batch) throw new Error(`Batch ${item.batchId} not found or empty for drug ${drug.name}`);
+
+        // Check batch expiry
+        const expiryDate = new Date(batch.expiryDate);
+        expiryDate.setUTCHours(0, 0, 0, 0);
+        const expiryStr = expiryDate.toISOString().split('T')[0];
+        if (expiryStr < todayStr) {
+          throw new Error(`Batch ${batch.batchNumber} expired on ${expiryStr}`);
+        }
         if (batch.remaining < item.quantity) {
           throw new Error(
             `Insufficient stock in batch ${batch.batchNumber}. Available: ${batch.remaining}, Requested: ${item.quantity}`
           );
         }
-        if (new Date(batch.expiryDate) < new Date()) {
-          throw new Error(`Batch ${batch.batchNumber} has expired`);
-        }
       } else {
+        // No batch selected
         if (drug.batches.length > 0) {
           throw new Error(`Please select a batch for ${drug.name}`);
+        }
+        // No batches – check drug's own expiry date
+        if (drug.expiryDate) {
+          const drugExpiry = new Date(drug.expiryDate);
+          drugExpiry.setUTCHours(0, 0, 0, 0);
+          const drugExpiryStr = drugExpiry.toISOString().split('T')[0];
+          if (drugExpiryStr < todayStr) {
+            throw new Error(`Drug ${drug.name} expired on ${drugExpiryStr}`);
+          }
         }
         if (drug.stock < item.quantity) {
           throw new Error(
@@ -195,7 +201,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Calculate totals
+    // ---------- TOTALS ----------
     let subtotal = 0;
     const itemsWithSubtotals = data.items.map((item) => {
       const itemSubtotal = item.unitPrice * item.quantity - item.discount;
@@ -206,13 +212,13 @@ export async function POST(request: NextRequest) {
     const totalAmount = subtotal + data.tax - data.discount;
     const netAmount = totalAmount;
 
-    // --- Immediate payment methods ---
+    // ---------- IMMEDIATE PAYMENT ----------
     if (data.paymentMethod !== "CHAPA") {
       const sale = await prisma.$transaction(async (tx) => {
         const newSale = await tx.sale.create({
           data: {
             invoiceNumber,
-            userId, // now using the real user ID
+            userId,
             customerName: data.customerName,
             customerPhone: data.customerPhone,
             customerEmail: data.customerEmail,
@@ -250,7 +256,7 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        // Update drug stock and batch remaining
+        // Update stock and batch remaining
         for (const item of data.items) {
           const drug = await tx.drug.findUnique({ where: { id: item.drugId } });
           if (!drug) continue;
@@ -286,7 +292,7 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        // Prescription creation (if needed)
+        // Prescription creation
         if (data.isPrescription && data.prescriptionData) {
           await tx.prescription.create({
             data: {
@@ -345,7 +351,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(sale, { status: 201 });
     }
 
-    // --- Chapa payment flow ---
+    // ---------- CHAPA PAYMENT FLOW ----------
     else {
       const pendingSale = await prisma.sale.create({
         data: {
@@ -401,7 +407,6 @@ export async function POST(request: NextRequest) {
             paymentLink: chapaResponse.data.checkout_url,
           },
         });
-
         return NextResponse.json({
           paymentLink: chapaResponse.data.checkout_url,
           saleId: pendingSale.id,

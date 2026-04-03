@@ -26,29 +26,76 @@ import { Plus, Search, Eye, Edit, Trash } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency } from "@/app/lib/utils";
 
+interface Batch {
+  id: string;
+  expiryDate: string;
+  remaining: number;
+}
+
 interface Drug {
   id: string;
   name: string;
   genericName: string | null;
-  category: string;
+  category: string | { name: string };
   stock: number;
   price: number;
   minStockLevel: number;
   expiryDate: string | null;
+  batches?: Batch[];
+}
+
+interface Category {
+  id: string;
+  name: string;
+}
+
+function getEffectiveExpiryDate(drug: Drug): string | null {
+  if (drug.batches && drug.batches.length > 0) {
+    const validBatches = drug.batches.filter(b => b.remaining > 0);
+    if (validBatches.length === 0) return null;
+    const earliest = validBatches.reduce((earliest, batch) =>
+      new Date(batch.expiryDate) < new Date(earliest.expiryDate) ? batch : earliest
+    );
+    return earliest.expiryDate;
+  }
+  return drug.expiryDate;
+}
+
+function getExpiryStatus(expiryDate: string | null) {
+  if (!expiryDate) return <Badge variant="secondary">No Expiry</Badge>;
+  const daysUntil = (new Date(expiryDate).getTime() - Date.now()) / (1000 * 3600 * 24);
+  if (daysUntil < 0) return <Badge variant="destructive">Expired</Badge>;
+  if (daysUntil < 30) return <Badge variant="warning">Expires Soon</Badge>;
+  return <Badge variant="success">Valid</Badge>;
 }
 
 export default function DrugsPage() {
   const [drugs, setDrugs] = useState<Drug[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, pages: 0 });
 
   // Filters
   const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("");
-  const [lowStock, setLowStock] = useState(""); // "true" or ""
-  const [expired, setExpired] = useState("");   // "true" or ""
+  const [selectedCategoryId, setSelectedCategoryId] = useState("");
+  const [lowStock, setLowStock] = useState("");
+  const [expired, setExpired] = useState("");
   const [sortBy, setSortBy] = useState("name");
   const [sortOrder, setSortOrder] = useState("asc");
+
+  // Fetch categories on mount
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const res = await fetch("/api/categories");
+        const data = await res.json();
+        setCategories(data.categories || []);
+      } catch (error) {
+        console.error("Failed to fetch categories", error);
+      }
+    };
+    fetchCategories();
+  }, []);
 
   useEffect(() => {
     const fetchDrugs = async () => {
@@ -57,7 +104,7 @@ export default function DrugsPage() {
         page: pagination.page.toString(),
         limit: pagination.limit.toString(),
         search,
-        ...(category && category !== "ALL" && { category }),
+        ...(selectedCategoryId && { categoryId: selectedCategoryId }),
         ...(lowStock === "true" && { lowStock: "true" }),
         ...(expired === "true" && { expired: "true" }),
         sortBy,
@@ -75,7 +122,7 @@ export default function DrugsPage() {
       }
     };
     fetchDrugs();
-  }, [pagination.page, search, category, lowStock, expired, sortBy, sortOrder]);
+  }, [pagination.page, search, selectedCategoryId, lowStock, expired, sortBy, sortOrder]);
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(e.target.value);
@@ -84,7 +131,7 @@ export default function DrugsPage() {
 
   const clearFilters = () => {
     setSearch("");
-    setCategory("");
+    setSelectedCategoryId("");
     setLowStock("");
     setExpired("");
     setSortBy("name");
@@ -98,12 +145,10 @@ export default function DrugsPage() {
     return <Badge variant="success">In Stock</Badge>;
   };
 
-  const getExpiryStatus = (expiryDate: string | null) => {
-    if (!expiryDate) return <Badge variant="secondary">No Expiry</Badge>;
-    const daysUntil = (new Date(expiryDate).getTime() - Date.now()) / (1000 * 3600 * 24);
-    if (daysUntil < 0) return <Badge variant="destructive">Expired</Badge>;
-    if (daysUntil < 30) return <Badge variant="warning">Expires Soon</Badge>;
-    return <Badge variant="success">Valid</Badge>;
+  const getCategoryName = (cat: Drug['category']): string => {
+    if (!cat) return '—';
+    if (typeof cat === 'string') return cat.replace(/_/g, " ");
+    return cat.name?.replace(/_/g, " ") || '—';
   };
 
   return (
@@ -139,16 +184,17 @@ export default function DrugsPage() {
               </div>
               <div className="space-y-2">
                 <Label>Category</Label>
-                <Select value={category} onValueChange={setCategory}>
+                <Select value={selectedCategoryId} onValueChange={setSelectedCategoryId}>
                   <SelectTrigger>
                     <SelectValue placeholder="All Categories" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="ALL">All Categories</SelectItem>
-                    <SelectItem value="PRESCRIPTION">Prescription</SelectItem>
-                    <SelectItem value="OVER_THE_COUNTER">OTC</SelectItem>
-                    <SelectItem value="CONTROLLED">Controlled</SelectItem>
-                    <SelectItem value="SUPPLEMENTS">Supplements</SelectItem>
+                    {categories.map((cat) => (
+                      <SelectItem key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -226,43 +272,46 @@ export default function DrugsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {drugs.map((drug) => (
-                    <TableRow key={drug.id}>
-                      <TableCell className="font-medium">
-                        <div>
-                          {drug.name}
-                          {drug.genericName && (
-                            <p className="text-xs text-muted-foreground">{drug.genericName}</p>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>{drug.category.replace(/_/g, " ")}</TableCell>
-                      <TableCell>{drug.stock}</TableCell>
-                      <TableCell>{formatCurrency(drug.price)}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          {drug.expiryDate ? new Date(drug.expiryDate).toLocaleDateString() : "—"}
-                          {getExpiryStatus(drug.expiryDate)}
-                        </div>
-                      </TableCell>
-                      <TableCell>{getStockStatusBadge(drug.stock, drug.minStockLevel)}</TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="ghost" size="icon" asChild>
-                          <Link href={`/dashboard/drugs/${drug.id}`}>
-                            <Eye className="h-4 w-4" />
-                          </Link>
-                        </Button>
-                        <Button variant="ghost" size="icon" asChild>
-                          <Link href={`/dashboard/drugs/${drug.id}/edit`}>
-                            <Edit className="h-4 w-4" />
-                          </Link>
-                        </Button>
-                        <Button variant="ghost" size="icon" className="text-destructive">
-                          <Trash className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {drugs.map((drug) => {
+                    const effectiveExpiry = getEffectiveExpiryDate(drug);
+                    return (
+                      <TableRow key={drug.id}>
+                        <TableCell className="font-medium">
+                          <div>
+                            {drug.name}
+                            {drug.genericName && (
+                              <p className="text-xs text-muted-foreground">{drug.genericName}</p>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>{getCategoryName(drug.category)}</TableCell>
+                        <TableCell>{drug.stock}</TableCell>
+                        <TableCell>{formatCurrency(drug.price)}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            {effectiveExpiry ? new Date(effectiveExpiry).toLocaleDateString() : "—"}
+                            {getExpiryStatus(effectiveExpiry)}
+                          </div>
+                        </TableCell>
+                        <TableCell>{getStockStatusBadge(drug.stock, drug.minStockLevel)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="ghost" size="icon" asChild>
+                            <Link href={`/dashboard/drugs/${drug.id}`}>
+                              <Eye className="h-4 w-4" />
+                            </Link>
+                          </Button>
+                          <Button variant="ghost" size="icon" asChild>
+                            <Link href={`/dashboard/drugs/${drug.id}/edit`}>
+                              <Edit className="h-4 w-4" />
+                            </Link>
+                          </Button>
+                          <Button variant="ghost" size="icon" className="text-destructive">
+                            <Trash className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}

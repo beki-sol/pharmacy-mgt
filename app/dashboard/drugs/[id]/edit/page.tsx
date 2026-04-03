@@ -41,15 +41,7 @@ const drugFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   genericName: z.string().optional(),
   brand: z.string().optional(),
-  category: z.enum([
-    "PRESCRIPTION",
-    "OVER_THE_COUNTER",
-    "CONTROLLED",
-    "HERBAL",
-    "SUPPLEMENTS",
-    "VACCINE",
-    "MEDICAL_SUPPLY",
-  ]),
+  categoryId: z.string().min(1, "Category is required"),
   dosage: z.string().min(1, "Dosage is required"),
   unit: z.string().min(1, "Unit is required"),
   price: z.number().positive("Price must be positive"),
@@ -75,12 +67,26 @@ interface Supplier {
   name: string;
 }
 
+interface Category {
+  id: string;
+  name: string;
+}
+
+interface Batch {
+  id: string;
+  batchNumber: string;
+  expiryDate: string;
+  remaining: number;
+}
+
 export default function EditDrugPage() {
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [batches, setBatches] = useState<Batch[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,13 +105,14 @@ export default function EditDrugPage() {
   const expiryDate = watch("expiryDate");
   const isActive = watch("isActive");
 
-  // Fetch drug data and suppliers
+  // Fetch drug data, suppliers, categories, and batches
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [drugRes, suppliersRes] = await Promise.all([
+        const [drugRes, suppliersRes, categoriesRes] = await Promise.all([
           fetch(`/api/drug/${id}`),
           fetch("/api/suppliers?limit=100"),
+          fetch("/api/categories"),
         ]);
 
         if (!drugRes.ok) {
@@ -117,12 +124,18 @@ export default function EditDrugPage() {
         const suppliersData = await suppliersRes.json();
         setSuppliers(suppliersData.suppliers || []);
 
+        const categoriesData = await categoriesRes.json();
+        setCategories(categoriesData.categories || []);
+
+        setBatches(drug.batches || []);
+
         // Pre‑fill form with existing data
+        const categoryId = typeof drug.category === 'object' ? drug.category?.id : drug.categoryId;
         reset({
           name: drug.name,
           genericName: drug.genericName || "",
           brand: drug.brand || "",
-          category: drug.category,
+          categoryId: categoryId || "",
           dosage: drug.dosage,
           unit: drug.unit,
           price: drug.price,
@@ -131,7 +144,8 @@ export default function EditDrugPage() {
           minStockLevel: drug.minStockLevel,
           maxStockLevel: drug.maxStockLevel,
           reorderPoint: drug.reorderPoint,
-          expiryDate: drug.expiryDate ? new Date(drug.expiryDate) : undefined,
+          // Only pre‑fill expiryDate if there are no batches
+          expiryDate: drug.batches?.length === 0 && drug.expiryDate ? new Date(drug.expiryDate) : undefined,
           batchNumber: drug.batchNumber || "",
           supplierId: drug.supplierId || "",
           barcode: drug.barcode || "",
@@ -153,10 +167,15 @@ export default function EditDrugPage() {
   const onSubmit = async (data: DrugFormData) => {
     setSaving(true);
     try {
-      const payload = {
+      const payload: any = {
         ...data,
-        expiryDate: data.expiryDate ? data.expiryDate.toISOString() : undefined,
+        // Only include expiryDate if there are no batches
+        expiryDate: batches.length === 0 && data.expiryDate ? data.expiryDate.toISOString() : undefined,
       };
+      // Include batch expiry updates if there are batches
+      if (batches.length > 0) {
+        payload.batches = batches.map(b => ({ id: b.id, expiryDate: b.expiryDate }));
+      }
       const res = await fetch(`/api/drug/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -172,6 +191,14 @@ export default function EditDrugPage() {
       toast.error(error.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleBatchExpiryChange = (idx: number, date: Date | undefined) => {
+    if (date) {
+      const newBatches = [...batches];
+      newBatches[idx].expiryDate = date.toISOString();
+      setBatches(newBatches);
     }
   };
 
@@ -206,6 +233,7 @@ export default function EditDrugPage() {
       <Header title="Edit Drug" subtitle="Update drug information" />
       <div className="p-6 max-w-4xl mx-auto">
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          {/* Basic Information Card */}
           <Card>
             <CardHeader>
               <CardTitle>Basic Information</CardTitle>
@@ -228,26 +256,24 @@ export default function EditDrugPage() {
                 <Input id="brand" {...register("brand")} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="category">Category *</Label>
+                <Label htmlFor="categoryId">Category *</Label>
                 <Select
-                  onValueChange={(value: any) => setValue("category", value)}
-                  defaultValue={watch("category")}
+                  onValueChange={(value) => setValue("categoryId", value)}
+                  value={watch("categoryId")}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select category" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="PRESCRIPTION">Prescription</SelectItem>
-                    <SelectItem value="OVER_THE_COUNTER">Over the Counter</SelectItem>
-                    <SelectItem value="CONTROLLED">Controlled</SelectItem>
-                    <SelectItem value="HERBAL">Herbal</SelectItem>
-                    <SelectItem value="SUPPLEMENTS">Supplements</SelectItem>
-                    <SelectItem value="VACCINE">Vaccine</SelectItem>
-                    <SelectItem value="MEDICAL_SUPPLY">Medical Supply</SelectItem>
+                    {categories.map((cat) => (
+                      <SelectItem key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-                {errors.category && (
-                  <p className="text-sm text-destructive">{errors.category.message}</p>
+                {errors.categoryId && (
+                  <p className="text-sm text-destructive">{errors.categoryId.message}</p>
                 )}
               </div>
               <div className="space-y-2">
@@ -270,7 +296,10 @@ export default function EditDrugPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="supplierId">Supplier</Label>
-                <Select onValueChange={(value) => setValue("supplierId", value)} defaultValue={watch("supplierId")}>
+                <Select
+                  onValueChange={(value) => setValue("supplierId", value)}
+                  value={watch("supplierId") || ""}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select supplier" />
                   </SelectTrigger>
@@ -286,6 +315,7 @@ export default function EditDrugPage() {
             </CardContent>
           </Card>
 
+          {/* Pricing & Stock Card */}
           <Card>
             <CardHeader>
               <CardTitle>Pricing & Stock</CardTitle>
@@ -363,44 +393,74 @@ export default function EditDrugPage() {
             </CardContent>
           </Card>
 
+          {/* Batch Information Card */}
           <Card>
             <CardHeader>
               <CardTitle>Batch Information</CardTitle>
-              <CardDescription>Update batch details (optional)</CardDescription>
+              <CardDescription>
+                {batches.length === 0
+                  ? "Set the drug's expiry date (no batches exist)."
+                  : "Edit expiry dates for each batch."}
+              </CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-3">
-              <div className="space-y-2">
-                <Label htmlFor="batchNumber">Batch Number</Label>
-                <Input id="batchNumber" {...register("batchNumber")} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="expiryDate">Expiry Date</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start text-left font-normal",
-                        !expiryDate && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {expiryDate ? format(expiryDate, "PPP") : "Pick a date"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0">
-                    <Calendar
-                      mode="single"
-                      selected={expiryDate}
-                      onSelect={(date) => date && setValue("expiryDate", date)}
-                      initialFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
+            <CardContent>
+              {batches.length === 0 ? (
+                // No batches – show single expiry date field
+                <div className="space-y-2">
+                  <Label htmlFor="expiryDate">Expiry Date</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "w-full justify-start text-left font-normal",
+                          !expiryDate && "text-muted-foreground"
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {expiryDate ? format(expiryDate, "PPP") : "Pick a date"}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        selected={expiryDate}
+                        onSelect={(date) => date && setValue("expiryDate", date)}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              ) : (
+                // Batches exist – show list of batch expiry pickers
+                <div className="space-y-4">
+                  {batches.map((batch, idx) => (
+                    <div key={batch.id} className="flex items-center gap-4 p-2 border rounded">
+                      <span className="font-medium w-32">{batch.batchNumber}</span>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" className="flex-1 justify-start text-left font-normal">
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {batch.expiryDate ? format(new Date(batch.expiryDate), "PPP") : "Pick a date"}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0">
+                          <Calendar
+                            mode="single"
+                            selected={batch.expiryDate ? new Date(batch.expiryDate) : undefined}
+                            onSelect={(date) => handleBatchExpiryChange(idx, date)}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
+          {/* Additional Information Card (unchanged) */}
           <Card>
             <CardHeader>
               <CardTitle>Additional Information</CardTitle>
@@ -428,11 +488,7 @@ export default function EditDrugPage() {
               </div>
             </CardContent>
             <CardFooter className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => router.back()}
-              >
+              <Button type="button" variant="outline" onClick={() => router.back()}>
                 Cancel
               </Button>
               <Button type="submit" disabled={saving}>

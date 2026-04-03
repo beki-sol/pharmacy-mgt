@@ -36,20 +36,12 @@ import { cn } from "@/app/lib/utils";
 import { format } from "date-fns";
 import toast from "react-hot-toast";
 
-// Schema matching the API's drugSchema, but with batch fields included
+// Updated schema: categoryId instead of category enum
 const drugFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   genericName: z.string().optional(),
   brand: z.string().optional(),
-  category: z.enum([
-    "PRESCRIPTION",
-    "OVER_THE_COUNTER",
-    "CONTROLLED",
-    "HERBAL",
-    "SUPPLEMENTS",
-    "VACCINE",
-    "MEDICAL_SUPPLY",
-  ]),
+  categoryId: z.string().min(1, "Category is required"),
   dosage: z.string().min(1, "Dosage is required"),
   unit: z.string().min(1, "Unit is required"),
   price: z.number().positive("Price must be positive"),
@@ -74,11 +66,17 @@ interface Supplier {
   name: string;
 }
 
+interface Category {
+  id: string;
+  name: string;
+}
+
 export default function NewDrugPage() {
   const router = useRouter();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(false);
-  const [fetchingSuppliers, setFetchingSuppliers] = useState(true);
+  const [fetchingData, setFetchingData] = useState(true);
 
   const {
     register,
@@ -89,7 +87,6 @@ export default function NewDrugPage() {
   } = useForm<DrugFormData>({
     resolver: zodResolver(drugFormSchema),
     defaultValues: {
-      category: "PRESCRIPTION",
       stock: 0,
       minStockLevel: 10,
       maxStockLevel: 100,
@@ -99,27 +96,31 @@ export default function NewDrugPage() {
 
   const expiryDate = watch("expiryDate");
 
-  // Fetch suppliers for dropdown
+  // Fetch suppliers and categories
   useEffect(() => {
-    const fetchSuppliers = async () => {
+    const fetchData = async () => {
       try {
-        const res = await fetch("/api/suppliers?limit=100");
-        const data = await res.json();
-        setSuppliers(data.suppliers || []);
+        const [suppliersRes, categoriesRes] = await Promise.all([
+          fetch("/api/suppliers?limit=100"),
+          fetch("/api/categories"),
+        ]);
+        const suppliersData = await suppliersRes.json();
+        const categoriesData = await categoriesRes.json();
+        setSuppliers(suppliersData.suppliers || []);
+        setCategories(categoriesData.categories || []);
       } catch (error) {
-        console.error("Failed to load suppliers", error);
-        toast.error("Could not load suppliers");
+        console.error("Failed to load data", error);
+        toast.error("Could not load required data");
       } finally {
-        setFetchingSuppliers(false);
+        setFetchingData(false);
       }
     };
-    fetchSuppliers();
+    fetchData();
   }, []);
 
   const onSubmit = async (data: DrugFormData) => {
     setLoading(true);
     try {
-      // Convert date to ISO string for API
       const payload = {
         ...data,
         expiryDate: data.expiryDate ? data.expiryDate.toISOString() : undefined,
@@ -142,7 +143,7 @@ export default function NewDrugPage() {
     }
   };
 
-  if (fetchingSuppliers) {
+  if (fetchingData) {
     return (
       <>
         <Header title="Add Drug" />
@@ -180,26 +181,23 @@ export default function NewDrugPage() {
                 <Input id="brand" {...register("brand")} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="category">Category *</Label>
+                <Label htmlFor="categoryId">Category *</Label>
                 <Select
-                  onValueChange={(value: any) => setValue("category", value)}
-                  defaultValue="PRESCRIPTION"
+                  onValueChange={(value) => setValue("categoryId", value)}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select category" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="PRESCRIPTION">Prescription</SelectItem>
-                    <SelectItem value="OVER_THE_COUNTER">Over the Counter</SelectItem>
-                    <SelectItem value="CONTROLLED">Controlled</SelectItem>
-                    <SelectItem value="HERBAL">Herbal</SelectItem>
-                    <SelectItem value="SUPPLEMENTS">Supplements</SelectItem>
-                    <SelectItem value="VACCINE">Vaccine</SelectItem>
-                    <SelectItem value="MEDICAL_SUPPLY">Medical Supply</SelectItem>
+                    {categories.map((cat) => (
+                      <SelectItem key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-                {errors.category && (
-                  <p className="text-sm text-destructive">{errors.category.message}</p>
+                {errors.categoryId && (
+                  <p className="text-sm text-destructive">{errors.categoryId.message}</p>
                 )}
               </div>
               <div className="space-y-2">
@@ -222,7 +220,9 @@ export default function NewDrugPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="supplierId">Supplier</Label>
-                <Select onValueChange={(value) => setValue("supplierId", value)}>
+                <Select
+                  onValueChange={(value) => setValue("supplierId", value)}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select supplier" />
                   </SelectTrigger>

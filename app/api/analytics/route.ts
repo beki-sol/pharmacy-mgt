@@ -16,9 +16,7 @@ function convertBigInts(obj: any): any {
   if (Array.isArray(obj)) return obj.map(item => convertBigInts(item));
   if (typeof obj === 'object') {
     const result: any = {};
-    for (const key in obj) {
-      result[key] = convertBigInts(obj[key]);
-    }
+    for (const key in obj) result[key] = convertBigInts(obj[key]);
     return result;
   }
   return obj;
@@ -35,51 +33,28 @@ export async function GET(request: NextRequest) {
     const now = new Date();
 
     if (startDate && endDate) {
-      dateFilter = {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
-      };
+      dateFilter = { gte: new Date(startDate), lte: new Date(endDate) };
     } else {
       switch (period) {
         case "today":
-          dateFilter = {
-            gte: startOfDay(now),
-            lte: endOfDay(now),
-          };
+          dateFilter = { gte: startOfDay(now), lte: endOfDay(now) };
           break;
         case "week":
-          dateFilter = {
-            gte: subDays(now, 7),
-            lte: now,
-          };
+          dateFilter = { gte: subDays(now, 7), lte: now };
           break;
         case "month":
-          dateFilter = {
-            gte: subDays(now, 30),
-            lte: now,
-          };
+          dateFilter = { gte: subDays(now, 30), lte: now };
           break;
         case "year":
-          dateFilter = {
-            gte: subMonths(now, 12),
-            lte: now,
-          };
+          dateFilter = { gte: subMonths(now, 12), lte: now };
           break;
       }
     }
 
     // Sales summary
     const salesSummary = await prisma.sale.aggregate({
-      where: {
-        createdAt: dateFilter,
-        status: "COMPLETED",
-      },
-      _sum: {
-        totalAmount: true,
-        discount: true,
-        tax: true,
-        netAmount: true,
-      },
+      where: { createdAt: dateFilter, status: "COMPLETED" },
+      _sum: { totalAmount: true, discount: true, tax: true, netAmount: true },
       _count: true,
     });
 
@@ -99,36 +74,31 @@ export async function GET(request: NextRequest) {
       ORDER BY date ASC
     `;
 
-    // Top selling drugs
+    // Top selling drugs (with category join)
     const topDrugs = await prisma.$queryRaw`
       SELECT 
-        d.id,
-        d.name,
-        d."genericName",
-        d."brand",
-        d.category,
+        d.id, d.name, d."genericName", d."brand",
+        c.name as category,
         COUNT(si.id) as times_sold,
         SUM(si.quantity) as total_quantity,
         SUM(si.subtotal) as total_revenue,
         AVG(si."unitPrice") as avg_price
       FROM "Drug" d
+      LEFT JOIN "Category" c ON d."category_id" = c.id
       JOIN "SaleItem" si ON d.id = si."drugId"
       JOIN "Sale" s ON si."saleId" = s.id
       WHERE s."createdAt" >= ${dateFilter.gte}
         AND s."createdAt" <= ${dateFilter.lte}
         AND s."status" = 'COMPLETED'
-      GROUP BY d.id, d.name, d."genericName", d."brand", d.category
+      GROUP BY d.id, d.name, d."genericName", d."brand", c.name
       ORDER BY total_quantity DESC
       LIMIT 20
     `;
 
-    // Top performing staff
+    // Top staff (unchanged)
     const topStaff = await prisma.$queryRaw`
       SELECT 
-        u.id,
-        u.name,
-        u.email,
-        u.role,
+        u.id, u.name, u.email, u.role,
         COUNT(s.id) as transactions,
         SUM(s."totalAmount") as total_sales,
         SUM(s."netAmount") as net_sales
@@ -142,22 +112,23 @@ export async function GET(request: NextRequest) {
       LIMIT 10
     `;
 
-    // Inventory status
+    // Inventory status by category (join with Category)
     const inventoryStatus = await prisma.$queryRaw`
       SELECT 
-        category,
-        COUNT(*) as total_items,
-        SUM(stock) as total_stock,
-        SUM(CASE WHEN stock <= "minStockLevel" THEN 1 ELSE 0 END) as low_stock_items,
-        SUM(CASE WHEN stock = 0 THEN 1 ELSE 0 END) as out_of_stock_items,
-        SUM(price * stock) as total_value
-      FROM "Drug"
-      WHERE "isActive" = true
-      GROUP BY category
-      ORDER BY category
+        c.name as category,
+        COUNT(d.id) as total_items,
+        SUM(d.stock) as total_stock,
+        SUM(CASE WHEN d.stock <= d."minStockLevel" THEN 1 ELSE 0 END) as low_stock_items,
+        SUM(CASE WHEN d.stock = 0 THEN 1 ELSE 0 END) as out_of_stock_items,
+        SUM(d.price * d.stock) as total_value
+      FROM "Drug" d
+      LEFT JOIN "Category" c ON d."category_id" = c.id
+      WHERE d."isActive" = true
+      GROUP BY c.name
+      ORDER BY c.name
     `;
 
-    // Sales by payment method
+    // Sales by payment method (unchanged)
     const salesByPayment = await prisma.$queryRaw`
       SELECT 
         "paymentMethod",
@@ -172,7 +143,7 @@ export async function GET(request: NextRequest) {
       ORDER BY total_amount DESC
     `;
 
-    // Customer metrics
+    // Customer metrics (unchanged)
     const customerMetrics = await prisma.$queryRaw<CustomerMetrics[]>`
       SELECT 
         COUNT(DISTINCT "customerPhone") as unique_customers,
@@ -186,48 +157,49 @@ export async function GET(request: NextRequest) {
         AND "status" = 'COMPLETED'
     `;
 
-    // Category performance
+    // Category performance (join with Category)
     const categoryPerformance = await prisma.$queryRaw`
       SELECT 
-        d.category,
+        c.name as category,
         COUNT(si.id) as transactions,
         SUM(si.quantity) as quantity_sold,
         SUM(si.subtotal) as revenue,
         AVG(si."unitPrice") as avg_price
       FROM "Drug" d
+      LEFT JOIN "Category" c ON d."category_id" = c.id
       JOIN "SaleItem" si ON d.id = si."drugId"
       JOIN "Sale" s ON si."saleId" = s.id
       WHERE s."createdAt" >= ${dateFilter.gte}
         AND s."createdAt" <= ${dateFilter.lte}
         AND s."status" = 'COMPLETED'
-      GROUP BY d.category
+      GROUP BY c.name
       ORDER BY revenue DESC
     `;
 
-    // Profit analysis
+    // Profit analysis (join with Category)
     const profitAnalysis = await prisma.$queryRaw`
       SELECT 
-        d.id,
-        d.name,
-        d.category,
+        d.id, d.name,
+        c.name as category,
         SUM(si.quantity) as quantity_sold,
         SUM(si.subtotal) as revenue,
         SUM(si.quantity * d."costPrice") as cost,
         SUM(si.subtotal - (si.quantity * d."costPrice")) as profit,
         (SUM(si.subtotal - (si.quantity * d."costPrice")) / NULLIF(SUM(si.subtotal), 0)) * 100 as profit_margin
       FROM "Drug" d
+      LEFT JOIN "Category" c ON d."category_id" = c.id
       JOIN "SaleItem" si ON d.id = si."drugId"
       JOIN "Sale" s ON si."saleId" = s.id
       WHERE s."createdAt" >= ${dateFilter.gte}
         AND s."createdAt" <= ${dateFilter.lte}
         AND s."status" = 'COMPLETED'
-      GROUP BY d.id, d.name, d.category
+      GROUP BY d.id, d.name, c.name
       HAVING SUM(si.subtotal) > 0
       ORDER BY profit DESC
       LIMIT 15
     `;
 
-    // Hourly pattern
+    // Hourly pattern (unchanged)
     const hourlyPattern = await prisma.$queryRaw`
       SELECT 
         EXTRACT(HOUR FROM "createdAt") as hour,
@@ -263,9 +235,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(convertBigInts(responseData));
   } catch (error: any) {
     console.error("Analytics error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch analytics" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch analytics" }, { status: 500 });
   }
 }

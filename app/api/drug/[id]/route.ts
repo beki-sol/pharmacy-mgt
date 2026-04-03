@@ -25,6 +25,10 @@ const drugUpdateSchema = z.object({
   sideEffects: z.string().optional(),
   storageCondition: z.string().optional(),
   isActive: z.boolean().optional(),
+  batches: z.array(z.object({
+    id: z.string(),
+    expiryDate: z.string().datetime(),
+  })).optional(),
 });
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -52,34 +56,61 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   const { id } = await params;
   const body = await request.json();
-  const data = drugUpdateSchema.parse({
-    ...body,
-    price: body.price !== undefined ? parseFloat(body.price) : undefined,
-    costPrice: body.costPrice !== undefined ? parseFloat(body.costPrice) : undefined,
-    stock: body.stock !== undefined ? parseInt(body.stock) : undefined,
-    minStockLevel: body.minStockLevel !== undefined ? parseInt(body.minStockLevel) : undefined,
-    maxStockLevel: body.maxStockLevel !== undefined ? parseInt(body.maxStockLevel) : undefined,
-    reorderPoint: body.reorderPoint !== undefined ? parseInt(body.reorderPoint) : undefined,
+
+  // Separate batches from the rest of the data
+  const { batches: batchUpdates, ...drugData } = body;
+
+  // Validate the drug scalar fields
+  const parsed = drugUpdateSchema.parse({
+    ...drugData,
+    price: drugData.price !== undefined ? parseFloat(drugData.price) : undefined,
+    costPrice: drugData.costPrice !== undefined ? parseFloat(drugData.costPrice) : undefined,
+    stock: drugData.stock !== undefined ? parseInt(drugData.stock) : undefined,
+    minStockLevel: drugData.minStockLevel !== undefined ? parseInt(drugData.minStockLevel) : undefined,
+    maxStockLevel: drugData.maxStockLevel !== undefined ? parseInt(drugData.maxStockLevel) : undefined,
+    reorderPoint: drugData.reorderPoint !== undefined ? parseInt(drugData.reorderPoint) : undefined,
   });
+
+  // Build update object by omitting undefined values
+  const updateData: any = {};
+  for (const key of Object.keys(parsed)) {
+    const value = (parsed as any)[key];
+    if (value !== undefined) {
+      updateData[key] = value;
+    }
+  }
+
+  // Convert expiryDate from string to Date if present
+  if (updateData.expiryDate) {
+    updateData.expiryDate = new Date(updateData.expiryDate);
+  }
 
   const existing = await prisma.drug.findUnique({ where: { id } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  if (data.barcode && data.barcode !== existing.barcode) {
-    const duplicate = await prisma.drug.findUnique({ where: { barcode: data.barcode } });
+  if (updateData.barcode && updateData.barcode !== existing.barcode) {
+    const duplicate = await prisma.drug.findUnique({ where: { barcode: updateData.barcode } });
     if (duplicate) return NextResponse.json({ error: "Barcode already exists" }, { status: 400 });
   }
 
+  // Update the drug's scalar fields
   const updated = await prisma.drug.update({
     where: { id },
-    data: {
-      ...data,
-      expiryDate: data.expiryDate ? new Date(data.expiryDate) : undefined,
-    },
+    data: updateData,
   });
+
+  // Update batch expiry dates if provided
+  if (batchUpdates && Array.isArray(batchUpdates)) {
+    for (const batchUpdate of batchUpdates) {
+      await prisma.drugBatch.update({
+        where: { id: batchUpdate.id },
+        data: { expiryDate: new Date(batchUpdate.expiryDate) },
+      });
+    }
+  }
+
   return NextResponse.json(updated);
 }
-
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.role !== "ADMIN") {
