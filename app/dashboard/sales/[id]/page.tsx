@@ -24,7 +24,7 @@ import { formatCurrency, formatDate } from "@/app/lib/utils";
 import { ArrowLeft, Printer, RotateCcw, AlertTriangle, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
 
-// Types
+// Types (same as before)
 interface SaleItem {
   id: string;
   quantity: number;
@@ -110,6 +110,48 @@ export default function SaleDetailPage() {
     fetchSale();
   }, [id]);
 
+  // Print handling
+  const handlePrint = () => {
+    window.print();
+  };
+
+  // Add print-specific CSS
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @media print {
+        /* Hide everything except the receipt content */
+        body * {
+          visibility: hidden;
+        }
+        #receipt-content, #receipt-content * {
+          visibility: visible;
+        }
+        #receipt-content {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          margin: 0;
+          padding: 20px;
+        }
+        /* Hide action buttons in print */
+        .no-print {
+          display: none !important;
+        }
+        /* Ensure cards have borders */
+        .card, .border {
+          border: 1px solid #ccc !important;
+          box-shadow: none !important;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "COMPLETED": return <Badge variant="success">Completed</Badge>;
@@ -143,10 +185,6 @@ export default function SaleDetailPage() {
     }
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   if (loading) {
     return (
       <>
@@ -175,30 +213,34 @@ export default function SaleDetailPage() {
 
   return (
     <>
-      <Header
-        title={`Sale ${sale.invoiceNumber}`}
-        subtitle={`Processed on ${formatDate(sale.createdAt)}`}
-        actions={
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => router.back()}>
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back
-            </Button>
-            <Button variant="outline" onClick={handlePrint}>
-              <Printer className="mr-2 h-4 w-4" />
-              Print
-            </Button>
-            {sale.status === "COMPLETED" && (
-              <Button variant="destructive" onClick={() => setRefundDialogOpen(true)}>
-                <RotateCcw className="mr-2 h-4 w-4" />
-                Refund
+      {/* Header and buttons (hidden in print) */}
+      <div className="no-print">
+        <Header
+          title={`Sale ${sale.invoiceNumber}`}
+          subtitle={`Processed on ${formatDate(sale.createdAt)}`}
+          actions={
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => router.back()}>
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back
               </Button>
-            )}
-          </div>
-        }
-      />
+              <Button variant="outline" onClick={handlePrint}>
+                <Printer className="mr-2 h-4 w-4" />
+                Print
+              </Button>
+              {sale.status === "COMPLETED" && (
+                <Button variant="destructive" onClick={() => setRefundDialogOpen(true)}>
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  Refund
+                </Button>
+              )}
+            </div>
+          }
+        />
+      </div>
 
-      <div className="p-6 space-y-6">
+      {/* Receipt content (visible in print) */}
+      <div id="receipt-content" className="p-6 space-y-6">
         {/* Summary Cards */}
         <div className="grid gap-4 md:grid-cols-4">
           <Card>
@@ -436,38 +478,40 @@ export default function SaleDetailPage() {
         </Card>
       </div>
 
-      {/* Refund Confirmation Dialog */}
-      <AlertDialog open={refundDialogOpen} onOpenChange={setRefundDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Process Refund</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to refund this sale? This will restore stock and batch
-              quantities, and mark the sale as refunded.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="py-4">
-            <Label htmlFor="reason">Reason (optional)</Label>
-            <Textarea
-              id="reason"
-              placeholder="Enter reason for refund..."
-              value={refundReason}
-              onChange={(e) => setRefundReason(e.target.value)}
-            />
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={refunding}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleRefund}
-              disabled={refunding}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {refunding && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Confirm Refund
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Refund Dialog (hidden in print) */}
+      <div className="no-print">
+        <AlertDialog open={refundDialogOpen} onOpenChange={setRefundDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Process Refund</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to refund this sale? This will restore stock and batch
+                quantities, and mark the sale as refunded.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="py-4">
+              <Label htmlFor="reason">Reason (optional)</Label>
+              <Textarea
+                id="reason"
+                placeholder="Enter reason for refund..."
+                value={refundReason}
+                onChange={(e) => setRefundReason(e.target.value)}
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={refunding}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleRefund}
+                disabled={refunding}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {refunding && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Confirm Refund
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
     </>
   );
 }

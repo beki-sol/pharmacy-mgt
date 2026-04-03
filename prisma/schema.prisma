@@ -1,6 +1,5 @@
 generator client {
-  provider        = "prisma-client-js"
-  
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -69,7 +68,6 @@ model Category {
   name      String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
   drugs     Drug[]
 }
 
@@ -78,7 +76,7 @@ model Drug {
   name             String
   genericName      String?
   brand            String?
-  categoryId   String?    @map("category_id")
+  categoryId       String?            @map("category_id")
   dosage           String
   unit             String
   price            Decimal            @db.Decimal(10, 2)
@@ -97,15 +95,14 @@ model Drug {
   storageCondition String?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
+  category         Category?          @relation(fields: [categoryId], references: [id])
   supplier         Supplier?          @relation(fields: [supplierId], references: [id])
-  category     Category?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   batches          DrugBatch[]
   inventoryLogs    InventoryLog[]
   prescriptions    PrescriptionItem[]
   purchaseItems    PurchaseItem[]
   saleItems        SaleItem[]
 
-  
   @@index([supplierId])
   @@index([isActive])
   @@index([name])
@@ -415,6 +412,16 @@ model Insurance {
   @@index([name])
 }
 
+model Draft {
+  id        String   @id @default(cuid())
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  userId    String
+
+  @@index([userId])
+}
+
 enum Role {
   ADMIN
   PHARMACIST
@@ -449,13 +456,4 @@ enum InventoryAction {
   DAMAGE
   EXPIRED
   TRANSFER
-}
-model Draft {
-  id        String   @id @default(cuid())
-  sessionId String   // identifies the anonymous user
-  data      Json     // stores the entire sale form data
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([sessionId])
 }

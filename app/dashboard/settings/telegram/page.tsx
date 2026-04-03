@@ -18,7 +18,7 @@ export default function TelegramSettings() {
   useEffect(() => {
     // Fetch current telegram chat ID
     const fetchTelegramChatId = async () => {
-      const res = await fetch("/api/user/telegram");
+      const res = await fetch("/api/users/telegram");
       const data = await res.json();
       setChatId(data.telegramChatId || "");
     };
@@ -29,7 +29,7 @@ export default function TelegramSettings() {
     setLoading(true);
     setMessage("");
     try {
-      const res = await fetch("/api/user/telegram", {
+      const res = await fetch("/api/users/telegram", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ telegramChatId: chatId }),

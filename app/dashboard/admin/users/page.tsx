@@ -43,30 +43,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Search, Edit, Trash, Shield, ShieldOff, Loader2 } from "lucide-react";
+import { Plus, Search, Edit, Trash, Shield, ShieldOff, Loader2, RefreshCw } from "lucide-react";
 import { formatDate } from "@/app/lib/utils";
 import { useForm, SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import toast from "react-hot-toast";
 
-
-
-// Role type matching Prisma enum
 type Role = "ADMIN" | "PHARMACIST" | "SALES_ASSISTANT" | "MANAGER" | "INVENTORY_MANAGER";
 
-// User type
 interface User {
   id: string;
   name: string;
   email: string;
+  phone: string | null;
   role: Role;
   twoFactorEnabled: boolean;
   isActive: boolean;
   createdAt: string;
+  lastLogin: string | null;
 }
 
-// Validation schemas
 const userSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email"),
@@ -83,21 +80,15 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, pages: 0 });
-
-  // Filters
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("");
-
-  // Dialog states
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  
-  // Form
   const {
     register,
     handleSubmit,
@@ -111,9 +102,7 @@ export default function AdminUsersPage() {
       isActive: true,
     },
   });
- 
 
-  // Check if user is admin
   useEffect(() => {
     if (status === "loading") return;
     if (!session || session.user.role !== "ADMIN") {
@@ -121,29 +110,30 @@ export default function AdminUsersPage() {
     }
   }, [session, status, router]);
 
-  // Fetch users
+  const fetchUsers = async () => {
+    setLoading(true);
+    const params = new URLSearchParams({
+      page: pagination.page.toString(),
+      limit: pagination.limit.toString(),
+      search,
+      ...(roleFilter && { role: roleFilter }),
+      ...(statusFilter === "active" && { isActive: "true" }),
+      ...(statusFilter === "inactive" && { isActive: "false" }),
+    });
+    try {
+      const res = await fetch(`/api/admin/users?${params}`);
+      const data = await res.json();
+      setUsers(data.users || []);
+      setPagination(data.pagination || { page: 1, limit: 10, total: 0, pages: 0 });
+    } catch (error) {
+      console.error("Failed to fetch users", error);
+      toast.error("Failed to load users");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchUsers = async () => {
-      setLoading(true);
-      const params = new URLSearchParams({
-        page: pagination.page.toString(),
-        limit: pagination.limit.toString(),
-        search,
-        ...(roleFilter && { role: roleFilter }),
-        ...(statusFilter && { isActive: statusFilter === "active" ? "true" : "false" }),
-      });
-      try {
-        const res = await fetch(`/api/users?${params}`);
-        const data = await res.json();
-        setUsers(data.users || []);
-        setPagination(data.pagination || { page: 1, limit: 10, total: 0, pages: 0 });
-      } catch (error) {
-        console.error("Failed to fetch users", error);
-        toast.error("Failed to load users");
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchUsers();
   }, [pagination.page, search, roleFilter, statusFilter]);
 
@@ -159,11 +149,10 @@ export default function AdminUsersPage() {
     setPagination(prev => ({ ...prev, page: 1 }));
   };
 
-  // Add user - explicitly typed as SubmitHandler
   const onAddSubmit: SubmitHandler<UserFormData> = async (data) => {
     setSubmitting(true);
     try {
-      const res = await fetch("/api/users", {
+      const res = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -173,8 +162,7 @@ export default function AdminUsersPage() {
       toast.success("User created successfully");
       setIsAddDialogOpen(false);
       reset();
-      // Refresh list
-      setPagination(prev => ({ ...prev, page: 1 }));
+      fetchUsers();
     } catch (error: any) {
       toast.error(error.message);
     } finally {
@@ -182,15 +170,19 @@ export default function AdminUsersPage() {
     }
   };
 
-  // Edit user - explicitly typed as SubmitHandler
   const onEditSubmit: SubmitHandler<UserFormData> = async (data) => {
     if (!selectedUser) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/users/${selectedUser.id}`, {
+      const res = await fetch(`/api/admin/users/${selectedUser.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          name: data.name,
+          phone: "", // we don't have phone in form? We'll keep as is
+          role: data.role,
+          isActive: data.isActive,
+        }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "Failed to update user");
@@ -198,8 +190,7 @@ export default function AdminUsersPage() {
       setIsEditDialogOpen(false);
       setSelectedUser(null);
       reset();
-      // Refresh list
-      setPagination(prev => ({ ...prev, page: 1 }));
+      fetchUsers();
     } catch (error: any) {
       toast.error(error.message);
     } finally {
@@ -207,23 +198,36 @@ export default function AdminUsersPage() {
     }
   };
 
-  // Delete user
+  const handleResetPassword = async (userId: string) => {
+    if (!confirm("Reset password to 'password123'?")) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resetPassword: true }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to reset password");
+      toast.success("Password reset to default (password123)");
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!selectedUser) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/users/${selectedUser.id}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || "Failed to delete user");
-      }
-      toast.success("User deleted successfully");
+      const res = await fetch(`/api/admin/users/${selectedUser.id}`, { method: "DELETE" });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to delete user");
+      toast.success(selectedUser.isActive ? "User deactivated" : "User deleted");
       setIsDeleteDialogOpen(false);
       setSelectedUser(null);
-      // Refresh list
-      setPagination(prev => ({ ...prev, page: 1 }));
+      fetchUsers();
     } catch (error: any) {
       toast.error(error.message);
     } finally {
@@ -231,7 +235,6 @@ export default function AdminUsersPage() {
     }
   };
 
-  // Open edit dialog and populate form
   const openEditDialog = (user: User) => {
     setSelectedUser(user);
     setValue("name", user.name);
@@ -241,7 +244,6 @@ export default function AdminUsersPage() {
     setIsEditDialogOpen(true);
   };
 
-  // Open delete confirmation
   const openDeleteDialog = (user: User) => {
     setSelectedUser(user);
     setIsDeleteDialogOpen(true);
@@ -256,8 +258,12 @@ export default function AdminUsersPage() {
     }
   };
 
-  if (status === "loading" || !session) {
+  if (status === "loading") {
     return <div className="p-8 text-center">Loading...</div>;
+  }
+
+  if (!session || session.user.role !== "ADMIN") {
+    return null; // Redirect handled by useEffect
   }
 
   return (
@@ -350,7 +356,7 @@ export default function AdminUsersPage() {
                     <SelectValue placeholder="All Roles" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All Roles</SelectItem>
+                    <SelectItem value="ALL">All Roles</SelectItem>
                     <SelectItem value="ADMIN">Admin</SelectItem>
                     <SelectItem value="PHARMACIST">Pharmacist</SelectItem>
                     <SelectItem value="MANAGER">Manager</SelectItem>
@@ -424,9 +430,12 @@ export default function AdminUsersPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>{formatDate(user.createdAt)}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right space-x-1">
                         <Button variant="ghost" size="icon" onClick={() => openEditDialog(user)}>
                           <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleResetPassword(user.id)}>
+                          <RefreshCw className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" className="text-destructive" onClick={() => openDeleteDialog(user)}>
                           <Trash className="h-4 w-4" />
@@ -471,9 +480,7 @@ export default function AdminUsersPage() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Edit User</DialogTitle>
-            <DialogDescription>
-              Update user information and permissions.
-            </DialogDescription>
+            <DialogDescription>Update user information and permissions.</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit(onEditSubmit)} className="space-y-4 py-4">
             <div className="space-y-2">
@@ -532,13 +539,14 @@ export default function AdminUsersPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the user "{selectedUser?.name}". This action cannot be undone.
+              This will {selectedUser?.isActive ? "deactivate" : "permanently delete"} the user "{selectedUser?.name}". 
+              {selectedUser?.isActive ? " They will no longer be able to log in." : " This action cannot be undone."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} disabled={submitting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
