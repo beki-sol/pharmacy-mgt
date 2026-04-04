@@ -18,13 +18,21 @@ import {
 } from "@/app/components/ui/alert-dialog";
 import { Textarea } from "@/app/components/ui/Textarea";
 import { Label } from "@/app/components/ui/Label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/app/components/ui/Select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/app/components/ui/Table";
 import { Separator } from "@/app/components/ui/Separator";
 import { formatCurrency, formatDate } from "@/app/lib/utils";
 import { ArrowLeft, Printer, RotateCcw, AlertTriangle, Loader2 } from "lucide-react";
+import Link from "next/link";
 import toast from "react-hot-toast";
 
-// Types (same as before)
+// Types
 interface SaleItem {
   id: string;
   quantity: number;
@@ -70,7 +78,7 @@ interface Sale {
   tax: number;
   netAmount: number;
   paymentMethod: string;
-  status: "COMPLETED" | "PENDING" | "CANCELLED" | "REFUNDED";
+  status: "COMPLETED" | "PENDING" | "CANCELLED" | "REFUNDED" | "PARTIALLY_PAID";
   notes: string | null;
   user: { name: string; email: string };
   saleItems: SaleItem[];
@@ -86,10 +94,18 @@ export default function SaleDetailPage() {
   const [sale, setSale] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Refund state
   const [refundDialogOpen, setRefundDialogOpen] = useState(false);
   const [refundReason, setRefundReason] = useState("");
   const [refunding, setRefunding] = useState(false);
 
+  // Status update state
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  const [newStatus, setNewStatus] = useState<"COMPLETED" | "CANCELLED" | "PARTIALLY_PAID" | null>(null);
+
+  // Fetch sale data
   useEffect(() => {
     const fetchSale = async () => {
       try {
@@ -110,39 +126,26 @@ export default function SaleDetailPage() {
     fetchSale();
   }, [id]);
 
-  // Print handling
-  const handlePrint = () => {
-    window.print();
-  };
-
-  // Add print-specific CSS
+  // Print styles to hide sidebar and header
   useEffect(() => {
-    const style = document.createElement('style');
+    const style = document.createElement("style");
     style.textContent = `
       @media print {
-        /* Hide everything except the receipt content */
-        body * {
-          visibility: hidden;
-        }
-        #receipt-content, #receipt-content * {
-          visibility: visible;
-        }
-        #receipt-content {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          margin: 0;
-          padding: 20px;
-        }
-        /* Hide action buttons in print */
-        .no-print {
+        aside, header, .sidebar, [data-print-hide="true"], button:not(.print-only) {
           display: none !important;
         }
-        /* Ensure cards have borders */
+        .p-6.space-y-6 {
+          margin: 0 !important;
+          padding: 1rem !important;
+          width: 100% !important;
+        }
         .card, .border {
           border: 1px solid #ccc !important;
           box-shadow: none !important;
+          background-color: white !important;
+        }
+        h2, h3, p {
+          color: black !important;
         }
       }
     `;
@@ -154,14 +157,22 @@ export default function SaleDetailPage() {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case "COMPLETED": return <Badge variant="success">Completed</Badge>;
-      case "PENDING": return <Badge variant="warning">Pending</Badge>;
-      case "CANCELLED": return <Badge variant="destructive">Cancelled</Badge>;
-      case "REFUNDED": return <Badge variant="secondary">Refunded</Badge>;
-      default: return <Badge>{status}</Badge>;
+      case "COMPLETED":
+        return <Badge variant="success">Completed</Badge>;
+      case "PENDING":
+        return <Badge variant="warning">Pending</Badge>;
+      case "CANCELLED":
+        return <Badge variant="destructive">Cancelled</Badge>;
+      case "REFUNDED":
+        return <Badge variant="secondary">Refunded</Badge>;
+      case "PARTIALLY_PAID":
+        return <Badge variant="warning">Partially Paid</Badge>;
+      default:
+        return <Badge>{status}</Badge>;
     }
   };
 
+  // Refund handler
   const handleRefund = async () => {
     setRefunding(true);
     try {
@@ -183,6 +194,36 @@ export default function SaleDetailPage() {
     } finally {
       setRefunding(false);
     }
+  };
+
+  // Status change handler
+  const handleStatusChange = async () => {
+    if (!newStatus) return;
+    setUpdatingStatus(true);
+    try {
+      const res = await fetch(`/api/sales/${id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update status");
+      toast.success(`Sale marked as ${newStatus}`);
+      setStatusDialogOpen(false);
+      // Refresh sale data
+      const updated = await fetch(`/api/sales/${id}`);
+      const updatedData = await updated.json();
+      setSale(updatedData);
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setUpdatingStatus(false);
+      setNewStatus(null);
+    }
+  };
+
+  const handlePrint = () => {
+    window.print();
   };
 
   if (loading) {
@@ -213,34 +254,47 @@ export default function SaleDetailPage() {
 
   return (
     <>
-      {/* Header and buttons (hidden in print) */}
-      <div className="no-print">
-        <Header
-          title={`Sale ${sale.invoiceNumber}`}
-          subtitle={`Processed on ${formatDate(sale.createdAt)}`}
-          actions={
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => router.back()}>
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Back
+      <Header
+        title={`Sale ${sale.invoiceNumber}`}
+        subtitle={`Processed on ${formatDate(sale.createdAt)}`}
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => router.back()}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back
+            </Button>
+            <Button variant="outline" onClick={handlePrint}>
+              <Printer className="mr-2 h-4 w-4" />
+              Print
+            </Button>
+            {sale.status === "COMPLETED" && (
+              <Button variant="destructive" onClick={() => setRefundDialogOpen(true)}>
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Refund
               </Button>
-              <Button variant="outline" onClick={handlePrint}>
-                <Printer className="mr-2 h-4 w-4" />
-                Print
-              </Button>
-              {sale.status === "COMPLETED" && (
-                <Button variant="destructive" onClick={() => setRefundDialogOpen(true)}>
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  Refund
-                </Button>
-              )}
-            </div>
-          }
-        />
-      </div>
+            )}
+            {sale.status === "PENDING" && (
+              <Select
+                onValueChange={(value) => {
+                  setNewStatus(value as any);
+                  setStatusDialogOpen(true);
+                }}
+              >
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Change Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="COMPLETED">Mark as Completed</SelectItem>
+                  <SelectItem value="CANCELLED">Cancel Sale</SelectItem>
+                  <SelectItem value="PARTIALLY_PAID">Mark as Partially Paid</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+        }
+      />
 
-      {/* Receipt content (visible in print) */}
-      <div id="receipt-content" className="p-6 space-y-6">
+      <div className="p-6 space-y-6">
         {/* Summary Cards */}
         <div className="grid gap-4 md:grid-cols-4">
           <Card>
@@ -262,9 +316,7 @@ export default function SaleDetailPage() {
               <CardTitle className="text-sm font-medium">Discount</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-destructive">
-                -{formatCurrency(sale.discount)}
-              </p>
+              <p className="text-2xl font-bold text-destructive">-{formatCurrency(sale.discount)}</p>
             </CardContent>
           </Card>
           <Card>
@@ -272,9 +324,7 @@ export default function SaleDetailPage() {
               <CardTitle className="text-sm font-medium">Net Amount</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-green-600">
-                {formatCurrency(sale.netAmount)}
-              </p>
+              <p className="text-2xl font-bold text-green-600">{formatCurrency(sale.netAmount)}</p>
             </CardContent>
           </Card>
         </div>
@@ -287,8 +337,7 @@ export default function SaleDetailPage() {
             </CardHeader>
             <CardContent className="space-y-2">
               <p>
-                <span className="text-muted-foreground">Name:</span>{" "}
-                {sale.customerName || "Guest"}
+                <span className="text-muted-foreground">Name:</span> {sale.customerName || "Guest"}
               </p>
               {sale.customerPhone && (
                 <p>
@@ -312,13 +361,11 @@ export default function SaleDetailPage() {
                 <span className="text-muted-foreground">Method:</span> {sale.paymentMethod}
               </p>
               <p>
-                <span className="text-muted-foreground">Amount:</span>{" "}
-                {formatCurrency(sale.netAmount)}
+                <span className="text-muted-foreground">Amount:</span> {formatCurrency(sale.netAmount)}
               </p>
               {sale.payments.map((p, idx) => (
                 <p key={p.id} className="text-sm">
-                  {idx === 0 ? "Paid" : "Partial"} {p.paidAt ? formatDate(p.paidAt) : ""} –{" "}
-                  {p.status}
+                  {idx === 0 ? "Paid" : "Partial"} {p.paidAt ? formatDate(p.paidAt) : ""} – {p.status}
                 </p>
               ))}
               {sale.notes && (
@@ -355,38 +402,27 @@ export default function SaleDetailPage() {
                     <TableCell>
                       {item.drug.name}
                       {item.drug.genericName && (
-                        <p className="text-xs text-muted-foreground">
-                          {item.drug.genericName}
-                        </p>
+                        <p className="text-xs text-muted-foreground">{item.drug.genericName}</p>
                       )}
                       {item.batch && (
                         <p className="text-xs text-muted-foreground">
-                          Batch: {item.batch.batchNumber} (Exp:{" "}
-                          {formatDate(item.batch.expiryDate)})
+                          Batch: {item.batch.batchNumber} (Exp: {formatDate(item.batch.expiryDate)})
                         </p>
                       )}
                     </TableCell>
                     <TableCell className="text-right">
                       {item.quantity} {item.drug.unit}
                     </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(item.unitPrice)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(item.discount)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(item.subtotal)}
-                    </TableCell>
+                    <TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(item.discount)}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(item.subtotal)}</TableCell>
                   </TableRow>
                 ))}
                 <TableRow>
                   <TableCell colSpan={4} className="text-right font-medium">
                     Subtotal
                   </TableCell>
-                  <TableCell className="text-right">
-                    {formatCurrency(sale.totalAmount)}
-                  </TableCell>
+                  <TableCell className="text-right">{formatCurrency(sale.totalAmount)}</TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell colSpan={4} className="text-right font-medium">
@@ -406,9 +442,7 @@ export default function SaleDetailPage() {
                   <TableCell colSpan={4} className="text-right font-bold">
                     Net Total
                   </TableCell>
-                  <TableCell className="text-right font-bold">
-                    {formatCurrency(sale.netAmount)}
-                  </TableCell>
+                  <TableCell className="text-right font-bold">{formatCurrency(sale.netAmount)}</TableCell>
                 </TableRow>
               </TableBody>
             </Table>
@@ -425,8 +459,7 @@ export default function SaleDetailPage() {
               {sale.prescriptions.map((rx) => (
                 <div key={rx.id} className="space-y-2">
                   <p>
-                    <span className="text-muted-foreground">Prescription #:</span>{" "}
-                    {rx.prescriptionNumber}
+                    <span className="text-muted-foreground">Prescription #:</span> {rx.prescriptionNumber}
                   </p>
                   <p>
                     <span className="text-muted-foreground">Patient:</span> {rx.patientName}
@@ -478,40 +511,61 @@ export default function SaleDetailPage() {
         </Card>
       </div>
 
-      {/* Refund Dialog (hidden in print) */}
-      <div className="no-print">
-        <AlertDialog open={refundDialogOpen} onOpenChange={setRefundDialogOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Process Refund</AlertDialogTitle>
-              <AlertDialogDescription>
-                Are you sure you want to refund this sale? This will restore stock and batch
-                quantities, and mark the sale as refunded.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <div className="py-4">
-              <Label htmlFor="reason">Reason (optional)</Label>
-              <Textarea
-                id="reason"
-                placeholder="Enter reason for refund..."
-                value={refundReason}
-                onChange={(e) => setRefundReason(e.target.value)}
-              />
-            </div>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={refunding}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={handleRefund}
-                disabled={refunding}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
-                {refunding && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Confirm Refund
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </div>
+      {/* Refund Confirmation Dialog */}
+      <AlertDialog open={refundDialogOpen} onOpenChange={setRefundDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Process Refund</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to refund this sale? This will restore stock and batch
+              quantities, and mark the sale as refunded.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="py-4">
+            <Label htmlFor="reason">Reason (optional)</Label>
+            <Textarea
+              id="reason"
+              placeholder="Enter reason for refund..."
+              value={refundReason}
+              onChange={(e) => setRefundReason(e.target.value)}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={refunding}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleRefund}
+              disabled={refunding}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {refunding && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirm Refund
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Status Change Confirmation Dialog */}
+      <AlertDialog open={statusDialogOpen} onOpenChange={setStatusDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Change Sale Status</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to mark this sale as {newStatus?.toLowerCase().replace("_", " ")}?
+              {newStatus === "COMPLETED" &&
+                " This will deduct stock and cannot be undone."}
+              {newStatus === "CANCELLED" && " This will cancel the sale (no stock changes)."}
+              {newStatus === "PARTIALLY_PAID" && " This will mark it as partially paid."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={updatingStatus}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleStatusChange} disabled={updatingStatus}>
+              {updatingStatus && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

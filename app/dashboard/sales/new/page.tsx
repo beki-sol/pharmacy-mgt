@@ -51,6 +51,7 @@ const saleFormSchema = z.object({
   customerPhone: z.string().optional(),
   customerEmail: z.string().email().optional(),
   paymentMethod: z.enum(["CASH", "CARD", "INSURANCE", "MIXED", "CHAPA"]),
+  status: z.enum(["COMPLETED", "PENDING", "PARTIALLY_PAID"]),
   items: z.array(itemSchema).min(1, "At least one item required"),
   discount: z.number().min(0),
   tax: z.number().min(0),
@@ -104,6 +105,7 @@ export default function NewSalePage() {
     defaultValues: {
       items: [{ drugId: "", quantity: 1, unitPrice: 0, discount: 0 }],
       paymentMethod: "CASH",
+      status: "COMPLETED",
       discount: 0,
       tax: 0,
       isPrescription: false,
@@ -231,35 +233,38 @@ export default function NewSalePage() {
   };
 
   const onSubmit = async (data: SaleFormData) => {
-    // Client-side validation
+    // Client-side validation (stock/batch checks)
     for (const item of data.items) {
       const drug = drugs.find((d) => d.id === item.drugId);
       if (!drug) {
         toast.error("Invalid drug selection");
         return;
       }
-      if (item.quantity > drug.stock) {
-        toast.error(`Insufficient stock for ${drug.name}. Available: ${drug.stock}`);
-        return;
-      }
-      const drugBatches = batches[item.drugId];
-      if (drugBatches && drugBatches.length > 0) {
-        if (!item.batchId) {
-          toast.error(`Please select a batch for ${drug.name}`);
+      // Only check stock if status is COMPLETED (because for pending, stock is not deducted)
+      if (data.status === "COMPLETED") {
+        if (item.quantity > drug.stock) {
+          toast.error(`Insufficient stock for ${drug.name}. Available: ${drug.stock}`);
           return;
         }
-        const selectedBatch = drugBatches.find((b) => b.id === item.batchId);
-        if (!selectedBatch) {
-          toast.error(`Selected batch not found for ${drug.name}`);
-          return;
-        }
-        if (item.quantity > selectedBatch.remaining) {
-          toast.error(`Batch ${selectedBatch.batchNumber} has only ${selectedBatch.remaining} left`);
-          return;
-        }
-        if (new Date(selectedBatch.expiryDate) < new Date()) {
-          toast.error(`Batch ${selectedBatch.batchNumber} is expired`);
-          return;
+        const drugBatches = batches[item.drugId];
+        if (drugBatches && drugBatches.length > 0) {
+          if (!item.batchId) {
+            toast.error(`Please select a batch for ${drug.name}`);
+            return;
+          }
+          const selectedBatch = drugBatches.find((b) => b.id === item.batchId);
+          if (!selectedBatch) {
+            toast.error(`Selected batch not found for ${drug.name}`);
+            return;
+          }
+          if (item.quantity > selectedBatch.remaining) {
+            toast.error(`Batch ${selectedBatch.batchNumber} has only ${selectedBatch.remaining} left`);
+            return;
+          }
+          if (new Date(selectedBatch.expiryDate) < new Date()) {
+            toast.error(`Batch ${selectedBatch.batchNumber} is expired`);
+            return;
+          }
         }
       }
     }
@@ -275,7 +280,7 @@ export default function NewSalePage() {
       if (!res.ok) {
         throw new Error(result.error || "Failed to create sale");
       }
-      toast.success("Sale completed!");
+      toast.success("Sale created successfully!");
       router.push("/dashboard/sales");
     } catch (error: any) {
       console.error("Submit sale error:", error);
@@ -371,17 +376,17 @@ export default function NewSalePage() {
                   <div key={field.id} className="grid gap-4 p-4 border rounded-lg md:grid-cols-12 items-end">
                     {/* Drug Select */}
                     <div className="md:col-span-3 space-y-2">
-  <Label>Drug *</Label>
-  <DrugSelect
-    value={selectedDrugId}
-    onChange={(value, drug) => {
-      setValue(`items.${index}.drugId`, value);
-      setValue(`items.${index}.unitPrice`, drug.price);
-    }}
-    drugs={drugs}
-    error={errors.items?.[index]?.drugId?.message}
-  />
-</div>
+                      <Label>Drug *</Label>
+                      <DrugSelect
+                        value={selectedDrugId}
+                        onChange={(value, drug) => {
+                          setValue(`items.${index}.drugId`, value);
+                          setValue(`items.${index}.unitPrice`, drug.price);
+                        }}
+                        drugs={drugs}
+                        error={errors.items?.[index]?.drugId?.message}
+                      />
+                    </div>
                     {/* Quantity */}
                     <div className="md:col-span-2 space-y-2">
                       <Label>Qty *</Label>
@@ -489,6 +494,19 @@ export default function NewSalePage() {
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
+                <Label>Sale Status *</Label>
+                <Select onValueChange={(value: any) => setValue("status", value)} defaultValue="COMPLETED">
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="COMPLETED">Completed</SelectItem>
+                    <SelectItem value="PENDING">Pending</SelectItem>
+                    <SelectItem value="PARTIALLY_PAID">Partially Paid</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label>Payment Method *</Label>
                 <Select
                   onValueChange={(value: any) => setValue("paymentMethod", value)}
@@ -544,7 +562,7 @@ export default function NewSalePage() {
               </Button>
               <Button type="submit" disabled={loading}>
                 {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Complete Sale
+                Create Sale
               </Button>
             </CardFooter>
           </Card>

@@ -18,39 +18,41 @@ const saleItemSchema = z.object({
 const saleSchema = z.object({
   customerName: z.string().optional(),
   customerPhone: z.string().optional(),
-  customerEmail: z.string().email().optional(),
+  customerEmail: z.string().optional(), // no longer requires email format
   paymentMethod: z.enum(["CASH", "CARD", "INSURANCE", "MIXED", "CHAPA"]),
+  status: z.enum(["COMPLETED", "PENDING", "PARTIALLY_PAID"]).default("COMPLETED"),
   items: z.array(saleItemSchema).min(1, "At least one item is required"),
   discount: z.number().min(0).default(0),
   tax: z.number().min(0).default(0),
   notes: z.string().optional(),
   isPrescription: z.boolean().default(false),
-  prescriptionData: z
-    .object({
-      patientName: z.string().optional(),
-      patientAge: z.number().optional(),
-      patientGender: z.string().optional(),
-      doctorName: z.string().optional(),
-      diagnosis: z.string().optional(),
-      prescriptionItems: z
-        .array(
-          z.object({
-            drugId: z.string(),
-            dosage: z.string(),
-            frequency: z.string(),
-            duration: z.string(),
-            instructions: z.string().optional(),
-            quantity: z.number().int().positive(),
-          })
-        )
-        .optional(),
-    })
-    .optional(),
+  prescriptionData: z.object({
+    patientName: z.string().optional(),
+    patientAge: z.number().optional(),
+    patientGender: z.string().optional(),
+    doctorName: z.string().optional(),
+    diagnosis: z.string().optional(),
+    prescriptionItems: z.array(
+      z.object({
+        drugId: z.string(),
+        dosage: z.string(),
+        frequency: z.string(),
+        duration: z.string(),
+        instructions: z.string().optional(),
+        quantity: z.number().int().positive(),
+      })
+    ).optional(),
+  }).optional(),
 });
 
-// GET - List sales (unchanged except payment method filter)
+// GET - List sales with pagination and filters
 export async function GET(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
@@ -118,7 +120,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Create sale with strict expiry checks
+// POST - Create a new sale with batch validation and status handling
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
@@ -139,14 +141,16 @@ export async function POST(request: NextRequest) {
       discount: parseFloat(body.discount || 0),
       tax: parseFloat(body.tax || 0),
     });
+    const customerEmail = data.customerEmail?.trim() || "guest@pharmacy.com";
 
     const invoiceNumber = `INV-${Date.now().toString().slice(-8)}-${Math.random()
       .toString(36)
       .substring(2, 6)
       .toUpperCase()}`;
 
+    const { status } = data;
+
     // ---------- VALIDATION (expiry and stock) ----------
-    // Get today's date without time (UTC)
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
     const todayStr = today.toISOString().split('T')[0];
@@ -193,7 +197,8 @@ export async function POST(request: NextRequest) {
             throw new Error(`Drug ${drug.name} expired on ${drugExpiryStr}`);
           }
         }
-        if (drug.stock < item.quantity) {
+        // Only check total stock if status is COMPLETED
+        if (status === "COMPLETED" && drug.stock < item.quantity) {
           throw new Error(
             `Insufficient stock for ${drug.name}. Available: ${drug.stock}, Requested: ${item.quantity}`
           );
@@ -212,7 +217,7 @@ export async function POST(request: NextRequest) {
     const totalAmount = subtotal + data.tax - data.discount;
     const netAmount = totalAmount;
 
-    // ---------- IMMEDIATE PAYMENT ----------
+    // ---------- IMMEDIATE PAYMENT (non-Chapa) ----------
     if (data.paymentMethod !== "CHAPA") {
       const sale = await prisma.$transaction(async (tx) => {
         const newSale = await tx.sale.create({
@@ -229,7 +234,7 @@ export async function POST(request: NextRequest) {
             paymentMethod: data.paymentMethod,
             notes: data.notes,
             isPrescription: data.isPrescription,
-            status: "COMPLETED",
+            status,
             saleItems: {
               create: itemsWithSubtotals.map((item) => ({
                 drugId: item.drugId,
@@ -245,51 +250,53 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        // Create payment
+        // Create payment record
         await tx.payment.create({
           data: {
             saleId: newSale.id,
             amount: netAmount,
             method: data.paymentMethod,
-            status: "COMPLETED",
-            paidAt: new Date(),
+            status: status === "COMPLETED" ? "COMPLETED" : "PENDING",
+            paidAt: status === "COMPLETED" ? new Date() : null,
           },
         });
 
-        // Update stock and batch remaining
-        for (const item of data.items) {
-          const drug = await tx.drug.findUnique({ where: { id: item.drugId } });
-          if (!drug) continue;
+        // Only deduct stock if status is COMPLETED
+        if (status === "COMPLETED") {
+          for (const item of data.items) {
+            const drug = await tx.drug.findUnique({ where: { id: item.drugId } });
+            if (!drug) continue;
 
-          const newStock = drug.stock - item.quantity;
-          await tx.drug.update({
-            where: { id: item.drugId },
-            data: { stock: newStock },
-          });
+            const newStock = drug.stock - item.quantity;
+            await tx.drug.update({
+              where: { id: item.drugId },
+              data: { stock: newStock },
+            });
 
-          if (item.batchId) {
-            const batch = await tx.drugBatch.findUnique({ where: { id: item.batchId } });
-            if (batch) {
-              const newRemaining = batch.remaining - item.quantity;
-              await tx.drugBatch.update({
-                where: { id: item.batchId },
-                data: { remaining: newRemaining },
-              });
+            if (item.batchId) {
+              const batch = await tx.drugBatch.findUnique({ where: { id: item.batchId } });
+              if (batch) {
+                const newRemaining = batch.remaining - item.quantity;
+                await tx.drugBatch.update({
+                  where: { id: item.batchId },
+                  data: { remaining: newRemaining },
+                });
+              }
             }
-          }
 
-          await tx.inventoryLog.create({
-            data: {
-              drugId: item.drugId,
-              type: "SALE",
-              quantity: -item.quantity,
-              previousStock: drug.stock,
-              newStock,
-              saleId: newSale.id,
-              batchNumber: item.batchNumber,
-              userId,
-            },
-          });
+            await tx.inventoryLog.create({
+              data: {
+                drugId: item.drugId,
+                type: "SALE",
+                quantity: -item.quantity,
+                previousStock: drug.stock,
+                newStock,
+                saleId: newSale.id,
+                batchNumber: item.batchNumber,
+                userId,
+              },
+            });
+          }
         }
 
         // Prescription creation
@@ -325,7 +332,7 @@ export async function POST(request: NextRequest) {
         return newSale;
       });
 
-      // Low stock alerts
+      // Low stock alerts (run regardless of status)
       const lowStockDrugs = await prisma.drug.findMany({
         where: {
           stock: { lte: prisma.drug.fields.minStockLevel },
@@ -351,7 +358,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(sale, { status: 201 });
     }
 
-    // ---------- CHAPA PAYMENT FLOW ----------
+    // ---------- CHAPA PAYMENT FLOW (always PENDING, no stock deduction) ----------
     else {
       const pendingSale = await prisma.sale.create({
         data: {
@@ -367,7 +374,7 @@ export async function POST(request: NextRequest) {
           paymentMethod: "CHAPA",
           notes: data.notes,
           isPrescription: data.isPrescription,
-          status: "PENDING",
+          status: "PENDING", // force pending
           saleItems: {
             create: itemsWithSubtotals.map((item) => ({
               drugId: item.drugId,
