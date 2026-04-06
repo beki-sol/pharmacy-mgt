@@ -31,20 +31,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/app/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/app/components/ui/alert-dialog";
+import { DatePickerWithRange } from "@/app/components/ui/data-range-picker";
+import { addDays } from "date-fns";
 import { formatCurrency, formatDate } from "@/app/lib/utils";
-import { Package, AlertTriangle, History, RefreshCw, Plus, Minus, Eye, Loader2 } from "lucide-react";
+import { Package, AlertTriangle, History, RefreshCw, Eye, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
 
 // Types
@@ -79,10 +70,11 @@ interface InventoryLog {
   quantity: number;
   previousStock: number;
   newStock: number;
+  batchNumber?: string;
   notes: string | null;
   createdAt: string;
   user: { name: string } | null;
-  batchNumber?: string;
+  reference?: { type: string; id: string } | null;
 }
 
 export default function InventoryPage() {
@@ -100,6 +92,14 @@ export default function InventoryPage() {
   const [sortBy, setSortBy] = useState("name");
   const [sortOrder, setSortOrder] = useState("asc");
 
+  // Filters for logs
+  const [logType, setLogType] = useState("");
+  const [logSearch, setLogSearch] = useState("");
+  const [logDateRange, setLogDateRange] = useState<{ from: Date; to: Date } | null>(null);
+
+  // Expiry monitoring filter
+  const [expirySearch, setExpirySearch] = useState("");
+
   // Adjustment dialog
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [selectedDrug, setSelectedDrug] = useState<Drug | null>(null);
@@ -109,6 +109,12 @@ export default function InventoryPage() {
   const [adjustNotes, setAdjustNotes] = useState("");
   const [adjustBatchId, setAdjustBatchId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+
+  // Log detail dialog
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [selectedLog, setSelectedLog] = useState<InventoryLog | null>(null);
+  const [logDetailLoading, setLogDetailLoading] = useState(false);
+  const [logDetailData, setLogDetailData] = useState<any>(null);
 
   // Fetch drugs (overview)
   useEffect(() => {
@@ -138,11 +144,13 @@ export default function InventoryPage() {
     fetchDrugs();
   }, [pagination.page, search, category, stockStatus, sortBy, sortOrder]);
 
-  // Fetch expiring batches
+  // Fetch expiring batches (with filter)
   useEffect(() => {
     const fetchExpiring = async () => {
       try {
-        const res = await fetch("/api/inventory/expiring");
+        const params = new URLSearchParams();
+        if (expirySearch) params.append("search", expirySearch);
+        const res = await fetch(`/api/inventory/expiring?${params}`);
         const data = await res.json();
         setExpiring(data.expiring || []);
       } catch (error) {
@@ -150,23 +158,36 @@ export default function InventoryPage() {
       }
     };
     fetchExpiring();
-  }, []);
+  }, [expirySearch]);
 
-  // Fetch inventory logs
+  // Fetch inventory logs with filters
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const res = await fetch("/api/inventory/logs");
+        const params = new URLSearchParams();
+        if (logType && logType !== "ALL") params.append("type", logType);
+        if (logSearch) params.append("search", logSearch);
+        if (logDateRange) {
+          params.append("startDate", logDateRange.from.toISOString());
+          params.append("endDate", logDateRange.to.toISOString());
+        }
+        const res = await fetch(`/api/inventory/logs?${params}`);
         const data = await res.json();
         setLogs(data.logs || []);
       } catch (error) {
         console.error("Failed to fetch logs", error);
+        toast.error("Failed to load logs");
       }
     };
     fetchLogs();
-  }, []);
+  }, [logType, logSearch, logDateRange]);
 
-  // When a drug is selected in adjust dialog, fetch its batches
+  const clearLogFilters = () => {
+    setLogType("");
+    setLogSearch("");
+    setLogDateRange(null);
+  };
+
   const handleDrugSelect = async (drugId: string) => {
     const drug = drugs.find(d => d.id === drugId);
     setSelectedDrug(drug || null);
@@ -193,12 +214,11 @@ export default function InventoryPage() {
       toast.error("Quantity must be positive");
       return;
     }
-    // If drug has batches, ensure batch selected and quantity ≤ remaining
-    if (batchesForDrug.length > 0) {
-      if (!adjustBatchId) {
-        toast.error("Please select a batch");
-        return;
-      }
+    if (batchesForDrug.length > 0 && !adjustBatchId) {
+      toast.error("Please select a batch");
+      return;
+    }
+    if (adjustBatchId) {
       const batch = batchesForDrug.find(b => b.id === adjustBatchId);
       if (batch && adjustQty > batch.remaining) {
         toast.error(`Batch ${batch.batchNumber} only has ${batch.remaining} remaining`);
@@ -223,17 +243,15 @@ export default function InventoryPage() {
       if (!res.ok) throw new Error(data.error || "Adjustment failed");
       toast.success("Stock adjusted");
       setAdjustOpen(false);
-      // Reset form
       setSelectedDrug(null);
       setBatchesForDrug([]);
       setAdjustType("ADJUSTMENT");
       setAdjustQty(1);
       setAdjustNotes("");
       setAdjustBatchId("");
-      // Refresh relevant tabs
-      setPagination(prev => ({ ...prev, page: 1 })); // refresh overview
-      // Optionally refresh logs and expiring
-      const logsRes = await fetch("/api/inventory/logs");
+      // Refresh data
+      setPagination(prev => ({ ...prev, page: 1 }));
+      const logsRes = await fetch(`/api/inventory/logs?${logType ? `type=${logType}` : ""}`);
       setLogs((await logsRes.json()).logs || []);
       const expRes = await fetch("/api/inventory/expiring");
       setExpiring((await expRes.json()).expiring || []);
@@ -241,6 +259,27 @@ export default function InventoryPage() {
       toast.error(error.message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleLogClick = async (log: InventoryLog) => {
+    setSelectedLog(log);
+    setDetailDialogOpen(true);
+    setLogDetailLoading(true);
+    try {
+      let details = null;
+      if (log.reference?.type === "sale") {
+        const res = await fetch(`/api/sales/${log.reference.id}`);
+        if (res.ok) details = await res.json();
+      } else if (log.reference?.type === "purchase") {
+        const res = await fetch(`/api/purchase-orders/${log.reference.id}`);
+        if (res.ok) details = await res.json();
+      }
+      setLogDetailData(details);
+    } catch (error) {
+      console.error("Failed to fetch log details", error);
+    } finally {
+      setLogDetailLoading(false);
     }
   };
 
@@ -256,6 +295,13 @@ export default function InventoryPage() {
     if (daysUntil < 0) return <Badge variant="destructive">Expired</Badge>;
     if (daysUntil < 30) return <Badge variant="warning">Expires Soon</Badge>;
     return <Badge variant="success">Valid</Badge>;
+  };
+
+  // Helper to get category display name
+  const getCategoryName = (cat: any) => {
+    if (!cat) return '—';
+    if (typeof cat === 'string') return cat.replace(/_/g, " ");
+    return cat.name?.replace(/_/g, " ") || '—';
   };
 
   return (
@@ -295,7 +341,7 @@ export default function InventoryPage() {
             <TabsTrigger value="logs">Inventory Logs</TabsTrigger>
           </TabsList>
 
-          {/* Overview Tab */}
+          {/* ==================== OVERVIEW TAB ==================== */}
           <TabsContent value="overview" className="space-y-4">
             <Card>
               <CardContent className="p-4">
@@ -319,10 +365,12 @@ export default function InventoryPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="ALL">All Categories</SelectItem>
-                        <SelectItem value="PRESCRIPTION">Prescription</SelectItem>
-                        <SelectItem value="OVER_THE_COUNTER">OTC</SelectItem>
-                        <SelectItem value="CONTROLLED">Controlled</SelectItem>
-                        <SelectItem value="SUPPLEMENTS">Supplements</SelectItem>
+                        <SelectItem value="Antibiotic">Antibiotic</SelectItem>
+                        <SelectItem value="Pain Relief">Pain Relief</SelectItem>
+                        <SelectItem value="Cardiovascular">Cardiovascular</SelectItem>
+                        <SelectItem value="Diabetes">Diabetes</SelectItem>
+                        <SelectItem value="Antihistamine">Antihistamine</SelectItem>
+                        <SelectItem value="Vitamin">Vitamin</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -407,7 +455,7 @@ export default function InventoryPage() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell>{drug.category.replace(/_/g, " ")}</TableCell>
+                          <TableCell>{getCategoryName(drug.category)}</TableCell>
                           <TableCell>{drug.stock}</TableCell>
                           <TableCell>{drug.minStockLevel} / {drug.maxStockLevel}</TableCell>
                           <TableCell>
@@ -437,7 +485,7 @@ export default function InventoryPage() {
               </CardContent>
             </Card>
 
-            {/* Pagination */}
+            {/* Pagination for overview */}
             {pagination.pages > 1 && (
               <div className="flex justify-center gap-2">
                 <Button
@@ -463,7 +511,7 @@ export default function InventoryPage() {
             )}
           </TabsContent>
 
-          {/* Batches Tab */}
+          {/* ==================== BATCH TRACKING TAB ==================== */}
           <TabsContent value="batches" className="space-y-4">
             <Card>
               <CardHeader>
@@ -509,8 +557,27 @@ export default function InventoryPage() {
             </Card>
           </TabsContent>
 
-          {/* Expiry Monitoring Tab */}
+          {/* ==================== EXPIRY MONITORING TAB ==================== */}
           <TabsContent value="expiring" className="space-y-4">
+            <Card>
+              <CardContent className="p-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Search by Drug or Batch</Label>
+                    <Input
+                      placeholder="Drug name or batch number..."
+                      value={expirySearch}
+                      onChange={(e) => setExpirySearch(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button variant="outline" onClick={() => setExpirySearch("")}>
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
             <Card>
               <CardHeader>
                 <CardTitle>Expiring & Expired Batches</CardTitle>
@@ -566,13 +633,61 @@ export default function InventoryPage() {
             </Card>
           </TabsContent>
 
-          {/* Inventory Logs Tab */}
+          {/* ==================== INVENTORY LOGS TAB ==================== */}
           <TabsContent value="logs" className="space-y-4">
             <Card>
-              <CardHeader>
-                <CardTitle>Recent Inventory Activity</CardTitle>
-              </CardHeader>
-              <CardContent>
+              <CardContent className="p-4">
+                <div className="grid gap-4 md:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label>Log Type</Label>
+                    <Select value={logType} onValueChange={setLogType}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All Types" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ALL">All</SelectItem>
+                        <SelectItem value="PURCHASE">Purchase</SelectItem>
+                        <SelectItem value="SALE">Sale</SelectItem>
+                        <SelectItem value="ADJUSTMENT">Adjustment</SelectItem>
+                        <SelectItem value="RETURN">Return</SelectItem>
+                        <SelectItem value="DAMAGE">Damage</SelectItem>
+                        <SelectItem value="EXPIRED">Expired</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Search Drug</Label>
+                    <Input
+                      placeholder="Drug name..."
+                      value={logSearch}
+                      onChange={(e) => setLogSearch(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Date Range</Label>
+                    <div className="flex gap-2">
+                      {logDateRange && (
+                        <DatePickerWithRange date={logDateRange} setDate={setLogDateRange} />
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setLogDateRange({ from: addDays(new Date(), -30), to: new Date() })}
+                      >
+                        Last 30 Days
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex items-end">
+                    <Button variant="outline" onClick={clearLogFilters} className="w-full">
+                      Clear Filters
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-0">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -583,12 +698,16 @@ export default function InventoryPage() {
                       <TableHead className="text-right">Previous</TableHead>
                       <TableHead className="text-right">New</TableHead>
                       <TableHead>User</TableHead>
-                      <TableHead>Notes</TableHead>
+                      <TableHead className="text-right">Details</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {logs.map((log) => (
-                      <TableRow key={log.id}>
+                      <TableRow
+                        key={log.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => handleLogClick(log)}
+                      >
                         <TableCell>{formatDate(log.createdAt)}</TableCell>
                         <TableCell>{log.drugName}</TableCell>
                         <TableCell>
@@ -616,13 +735,17 @@ export default function InventoryPage() {
                         <TableCell className="text-right">{log.previousStock}</TableCell>
                         <TableCell className="text-right">{log.newStock}</TableCell>
                         <TableCell>{log.user?.name || "System"}</TableCell>
-                        <TableCell className="max-w-xs truncate">{log.notes}</TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="ghost" size="icon">
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                     {logs.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={8} className="text-center text-muted-foreground">
-                          No inventory logs yet
+                          No inventory logs found
                         </TableCell>
                       </TableRow>
                     )}
@@ -645,7 +768,7 @@ export default function InventoryPage() {
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="drug">Drug *</Label>
+              <Label>Drug *</Label>
               <Select onValueChange={handleDrugSelect}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select a drug" />
@@ -662,39 +785,25 @@ export default function InventoryPage() {
 
             {selectedDrug && batchesForDrug.length > 0 && (
               <div className="space-y-2">
-                <Label htmlFor="batch">Batch *</Label>
+                <Label>Batch *</Label>
                 <Select value={adjustBatchId} onValueChange={setAdjustBatchId}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select a batch" />
                   </SelectTrigger>
                   <SelectContent>
-                    {batchesForDrug.map((batch) => {
-                      const daysLeft = Math.ceil(
-                        (new Date(batch.expiryDate).getTime() - Date.now()) / (1000 * 3600 * 24)
-                      );
-                      return (
-                        <SelectItem key={batch.id} value={batch.id}>
-                          {batch.batchNumber} – Exp: {formatDate(batch.expiryDate)} (Rem:{" "}
-                          {batch.remaining}) {daysLeft < 0 ? "(Expired)" : ""}
-                        </SelectItem>
-                      );
-                    })}
+                    {batchesForDrug.map((batch) => (
+                      <SelectItem key={batch.id} value={batch.id}>
+                        {batch.batchNumber} – Exp: {formatDate(batch.expiryDate)} (Rem: {batch.remaining})
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-                {batchesForDrug.length === 1 && (
-                  <p className="text-xs text-muted-foreground">
-                    Only one batch available. It has been auto‑selected.
-                  </p>
-                )}
               </div>
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="type">Adjustment Type *</Label>
-              <Select
-                value={adjustType}
-                onValueChange={(value: any) => setAdjustType(value)}
-              >
+              <Label>Adjustment Type *</Label>
+              <Select value={adjustType} onValueChange={(value: any) => setAdjustType(value)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -707,9 +816,8 @@ export default function InventoryPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="qty">Quantity *</Label>
+              <Label>Quantity *</Label>
               <Input
-                id="qty"
                 type="number"
                 min={1}
                 value={adjustQty}
@@ -721,12 +829,11 @@ export default function InventoryPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="notes">Notes</Label>
+              <Label>Notes</Label>
               <Textarea
-                id="notes"
-                placeholder="Optional reason"
                 value={adjustNotes}
                 onChange={(e) => setAdjustNotes(e.target.value)}
+                placeholder="Optional reason"
               />
             </div>
           </div>
@@ -738,6 +845,47 @@ export default function InventoryPage() {
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Apply
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Log Detail Dialog */}
+      <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Inventory Log Details</DialogTitle>
+          </DialogHeader>
+          {logDetailLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+          ) : (
+            selectedLog && (
+              <div className="space-y-4">
+                <div className="grid gap-2">
+                  <p><strong>Date:</strong> {formatDate(selectedLog.createdAt)}</p>
+                  <p><strong>Drug:</strong> {selectedLog.drugName}</p>
+                  <p><strong>Type:</strong> {selectedLog.type}</p>
+                  <p><strong>Quantity:</strong> {selectedLog.quantity}</p>
+                  <p><strong>Previous Stock:</strong> {selectedLog.previousStock}</p>
+                  <p><strong>New Stock:</strong> {selectedLog.newStock}</p>
+                  {selectedLog.batchNumber && <p><strong>Batch:</strong> {selectedLog.batchNumber}</p>}
+                  <p><strong>User:</strong> {selectedLog.user?.name || "System"}</p>
+                  <p><strong>Notes:</strong> {selectedLog.notes || "—"}</p>
+                </div>
+                {logDetailData && (
+                  <div className="border-t pt-4">
+                    <h4 className="font-semibold mb-2">Reference Details</h4>
+                    <pre className="text-xs bg-muted p-2 rounded overflow-auto">
+                      {JSON.stringify(logDetailData, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )
+          )}
+          <DialogFooter>
+            <Button onClick={() => setDetailDialogOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
