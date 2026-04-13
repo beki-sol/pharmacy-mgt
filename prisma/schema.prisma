@@ -457,3 +457,11 @@ enum InventoryAction {
   EXPIRED
   TRANSFER
 }
+
+model AppSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

@@ -16,6 +16,7 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  Key,
   Home,
   Truck,
   Wallet,
@@ -43,6 +44,7 @@ const navigation = [
   { name: "Alerts", href: "/dashboard/alerts", icon: AlertCircle },
   { name: "Expenses", href: "/dashboard/expenses", icon: Wallet },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
+  { name: "License", href: "/dashboard/admin/license", icon: Key }
 ];
 
 export function Sidebar() {
