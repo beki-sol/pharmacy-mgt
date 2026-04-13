@@ -9,15 +9,22 @@ import { Badge } from "@/app/components/ui/Badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/Tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/app/components/ui/Table";
 import { formatCurrency, formatDate } from "@/app/lib/utils";
-import { ArrowLeft, Edit, Package, ShoppingCart, CreditCard, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Edit, AlertTriangle, Package, ShoppingCart, CreditCard } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
+
+// Helper to get category name (handles both string and object)
+function getCategoryName(category: any): string {
+  if (!category) return "—";
+  if (typeof category === "string") return category.replace(/_/g, " ");
+  return category.name?.replace(/_/g, " ") || "—";
+}
 
 interface Drug {
   id: string;
   name: string;
   genericName: string | null;
-  category: string;
+  category: any; // can be string or object
   price: number;
   stock: number;
 }
@@ -37,7 +44,6 @@ interface Payment {
   amount: number;
   method: string;
   status: string;
-  paidAt: string | null;
   createdAt: string;
 }
 
@@ -68,7 +74,7 @@ interface Supplier {
   };
 }
 
-export default function SupplierViewPage() {
+export default function SupplierDetailPage() {
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
@@ -191,7 +197,7 @@ export default function SupplierViewPage() {
           </Card>
         </div>
 
-        {/* Supplier Details */}
+        {/* Contact Information */}
         <Card>
           <CardHeader>
             <CardTitle>Contact Information</CardTitle>
@@ -274,7 +280,7 @@ export default function SupplierViewPage() {
                         <TableRow key={drug.id}>
                           <TableCell className="font-medium">{drug.name}</TableCell>
                           <TableCell>{drug.genericName || "—"}</TableCell>
-                          <TableCell>{drug.category.replace(/_/g, " ")}</TableCell>
+                          <TableCell>{getCategoryName(drug.category)}</TableCell>
                           <TableCell className="text-right">{formatCurrency(drug.price)}</TableCell>
                           <TableCell className="text-right">{drug.stock}</TableCell>
                         </TableRow>

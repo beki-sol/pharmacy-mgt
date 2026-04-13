@@ -22,9 +22,10 @@ import {
   SelectValue,
 } from "@/app/components/ui/Select";
 import { Label } from "@/app/components/ui/Label";
-import { Plus, Search, Eye, Edit, Trash } from "lucide-react";
+import { Plus, Search, Eye, Edit, Trash, ShoppingCart } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency } from "@/app/lib/utils";
+import toast from "react-hot-toast";
 
 interface Batch {
   id: string;
@@ -42,6 +43,7 @@ interface Drug {
   minStockLevel: number;
   expiryDate: string | null;
   batches?: Batch[];
+  supplier?: { name: string; email: string } | null;
 }
 
 interface Category {
@@ -294,7 +296,7 @@ export default function DrugsPage() {
                           </div>
                         </TableCell>
                         <TableCell>{getStockStatusBadge(drug.stock, drug.minStockLevel)}</TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right space-x-1">
                           <Button variant="ghost" size="icon" asChild>
                             <Link href={`/dashboard/drugs/${drug.id}`}>
                               <Eye className="h-4 w-4" />
@@ -303,6 +305,11 @@ export default function DrugsPage() {
                           <Button variant="ghost" size="icon" asChild>
                             <Link href={`/dashboard/drugs/${drug.id}/edit`}>
                               <Edit className="h-4 w-4" />
+                            </Link>
+                          </Button>
+                          <Button variant="ghost" size="icon" asChild>
+                            <Link href={`/dashboard/purchase-orders/new?drugId=${drug.id}`}>
+                              <ShoppingCart className="h-4 w-4" />
                             </Link>
                           </Button>
                           <Button variant="ghost" size="icon" className="text-destructive">

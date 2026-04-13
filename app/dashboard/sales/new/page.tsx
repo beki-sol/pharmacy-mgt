@@ -37,7 +37,7 @@ import {
 import { Plus, Trash2, Loader2, Save, FolderOpen } from "lucide-react";
 import toast from "react-hot-toast";
 
-// Schema
+// Schema – email is now a plain optional string (no validation)
 const itemSchema = z.object({
   drugId: z.string().min(1, "Drug is required"),
   quantity: z.number().int().positive(),
@@ -49,7 +49,7 @@ const itemSchema = z.object({
 const saleFormSchema = z.object({
   customerName: z.string().optional(),
   customerPhone: z.string().optional(),
-  customerEmail: z.string().email().optional(),
+  customerEmail: z.string().optional(),
   paymentMethod: z.enum(["CASH", "CARD", "INSURANCE", "MIXED", "CHAPA"]),
   status: z.enum(["COMPLETED", "PENDING", "PARTIALLY_PAID"]),
   items: z.array(itemSchema).min(1, "At least one item required"),
@@ -210,7 +210,36 @@ export default function NewSalePage() {
   };
 
   const loadDraft = (draft: Draft) => {
-    reset(draft.data);
+    let data = draft.data;
+    // Check if this is a cart draft (from drug page)
+    if ((data as any).type === "cart") {
+      // Convert cart items to sale items
+      const convertedItems = (data as any).items.map((item: any) => ({
+        drugId: item.drugId,
+        quantity: item.quantity,
+        unitPrice: item.price,
+        discount: 0,
+        batchId: item.batchId,
+        batchNumber: item.batchNumber,
+      }));
+      // Create a sale form data object with defaults
+      const saleData: SaleFormData = {
+        customerName: "",
+        customerPhone: "",
+        customerEmail: "",
+        paymentMethod: "CASH",
+        status: "COMPLETED",
+        items: convertedItems,
+        discount: 0,
+        tax: 0,
+        notes: "",
+        isPrescription: false,
+      };
+      reset(saleData);
+    } else {
+      // Normal sale draft
+      reset(draft.data);
+    }
     setDraftDialogOpen(false);
     toast.success("Draft loaded");
   };
@@ -240,7 +269,6 @@ export default function NewSalePage() {
         toast.error("Invalid drug selection");
         return;
       }
-      // Only check stock if status is COMPLETED (because for pending, stock is not deducted)
       if (data.status === "COMPLETED") {
         if (item.quantity > drug.stock) {
           toast.error(`Insufficient stock for ${drug.name}. Available: ${drug.stock}`);
@@ -271,10 +299,15 @@ export default function NewSalePage() {
 
     setLoading(true);
     try {
+      // Prepare payload – omit email if empty string
+      const payload = {
+        ...data,
+        customerEmail: data.customerEmail && data.customerEmail.trim() !== "" ? data.customerEmail.trim() : undefined,
+      };
       const res = await fetch("/api/sales", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
       const result = await res.json();
       if (!res.ok) {
@@ -430,7 +463,7 @@ export default function NewSalePage() {
                       <Label>Batch</Label>
                       <Select
                         onValueChange={(value) => setValue(`items.${index}.batchId`, value)}
-                        defaultValue={field.batchId}
+                        value={watchedItems[index]?.batchId || ""}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Select batch" />

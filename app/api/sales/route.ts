@@ -299,6 +299,7 @@ export async function POST(request: NextRequest) {
           }
         }
 
+
         // Prescription creation
         if (data.isPrescription && data.prescriptionData) {
           await tx.prescription.create({
@@ -328,6 +329,7 @@ export async function POST(request: NextRequest) {
             },
           });
         }
+        
 
         return newSale;
       });
