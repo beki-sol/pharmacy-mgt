@@ -58,6 +58,12 @@ export async function GET(request: NextRequest) {
       _count: true,
     });
 
+    // ✅ Compute total inventory value correctly (sum of price * stock for active drugs)
+    const inventoryValueResult = await prisma.$queryRaw<{ total: number }[]>`
+      SELECT SUM(price * stock) as total FROM "Drug" WHERE "isActive" = true
+    `;
+    const inventoryValue = inventoryValueResult[0]?.total || 0;
+
     // Daily sales trend
     const salesTrend = await prisma.$queryRaw`
       SELECT 
@@ -74,7 +80,7 @@ export async function GET(request: NextRequest) {
       ORDER BY date ASC
     `;
 
-    // Top selling drugs (with category join)
+    // Top selling drugs
     const topDrugs = await prisma.$queryRaw`
       SELECT 
         d.id, d.name, d."genericName", d."brand",
@@ -95,7 +101,7 @@ export async function GET(request: NextRequest) {
       LIMIT 20
     `;
 
-    // Top staff (unchanged)
+    // Top staff
     const topStaff = await prisma.$queryRaw`
       SELECT 
         u.id, u.name, u.email, u.role,
@@ -112,7 +118,7 @@ export async function GET(request: NextRequest) {
       LIMIT 10
     `;
 
-    // Inventory status by category (join with Category)
+    // Inventory status by category
     const inventoryStatus = await prisma.$queryRaw`
       SELECT 
         c.name as category,
@@ -128,7 +134,7 @@ export async function GET(request: NextRequest) {
       ORDER BY c.name
     `;
 
-    // Sales by payment method (unchanged)
+    // Sales by payment method
     const salesByPayment = await prisma.$queryRaw`
       SELECT 
         "paymentMethod",
@@ -143,7 +149,7 @@ export async function GET(request: NextRequest) {
       ORDER BY total_amount DESC
     `;
 
-    // Customer metrics (unchanged)
+    // Customer metrics
     const customerMetrics = await prisma.$queryRaw<CustomerMetrics[]>`
       SELECT 
         COUNT(DISTINCT "customerPhone") as unique_customers,
@@ -157,7 +163,7 @@ export async function GET(request: NextRequest) {
         AND "status" = 'COMPLETED'
     `;
 
-    // Category performance (join with Category)
+    // Category performance
     const categoryPerformance = await prisma.$queryRaw`
       SELECT 
         c.name as category,
@@ -176,7 +182,7 @@ export async function GET(request: NextRequest) {
       ORDER BY revenue DESC
     `;
 
-    // Profit analysis (join with Category)
+    // Profit analysis
     const profitAnalysis = await prisma.$queryRaw`
       SELECT 
         d.id, d.name,
@@ -199,7 +205,7 @@ export async function GET(request: NextRequest) {
       LIMIT 15
     `;
 
-    // Hourly pattern (unchanged)
+    // Hourly pattern
     const hourlyPattern = await prisma.$queryRaw`
       SELECT 
         EXTRACT(HOUR FROM "createdAt") as hour,
@@ -220,6 +226,7 @@ export async function GET(request: NextRequest) {
         totalTax: salesSummary._sum.tax || 0,
         netSales: salesSummary._sum.netAmount || 0,
         totalTransactions: salesSummary._count,
+        inventoryValue, // ✅ added
       },
       salesTrend,
       topDrugs,
