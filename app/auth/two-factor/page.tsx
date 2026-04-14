@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
  
      const {password }= enable2FASchema.parse(body)
  
-     const isValidPassword= await comparePassword(password,user.password,10);
+     const isValidPassword= await comparePassword(password,user.password);
      
      if(!isValidPassword){
        return NextResponse.json(
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
     } else if(body.action==="disable"){
      const {password,code }= body;
  
-     const isValidPassword= await comparePassword(password,user.password,10);
+     const isValidPassword= await comparePassword(password,user.password);
  
      if(!isValidPassword){
        return NextResponse.json({
