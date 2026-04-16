@@ -17,7 +17,7 @@ const updateUserSchema = z.object({
 // PATCH /api/users/:id - Update a user
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth();
@@ -28,7 +28,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const { id } = params;
+    const { id } = await params;
     const body = await request.json();
     const data = updateUserSchema.parse(body);
 
@@ -103,7 +103,7 @@ export async function PATCH(
 // DELETE /api/users/:id - Delete a user
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await auth();
@@ -114,7 +114,7 @@ export async function DELETE(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const { id } = params;
+    const { id } = await params;
 
     // Prevent admin from deleting themselves
     if (id === session.user.id) {

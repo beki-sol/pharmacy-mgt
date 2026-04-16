@@ -393,38 +393,41 @@ export async function POST(request: NextRequest) {
       });
 
       const txRef = `tx-${pendingSale.invoiceNumber}-${Date.now()}`;
-      const chapaResponse = await initializeChapaPayment({
-        amount: netAmount,
-        currency: "ETB",
-        tx_ref: txRef,
-        callback_url: `${process.env.APP_URL}/api/payments/chapa/verify`,
-        return_url: `${process.env.APP_URL}/dashboard/sales/${pendingSale.id}/status`,
-        customer: {
-          email: data.customerEmail || "customer@example.com",
-          name: data.customerName,
-        },
-      });
+      // ---------- CHAPA PAYMENT FLOW ----------
+const chapaResult = await initializeChapaPayment({
+  amount: netAmount,
+  currency: "ETB",
+  tx_ref: txRef,
+  callback_url: "http://localhost:3000/api/payment/chapa/verify",
+  return_url: `http://localhost:3000/dashboard/sales/${pendingSale.id}/status`,
+  email: customerEmail,          // already using customerEmail from sale data
+  first_name: data.customerName?.split(' ')[0] || "Customer",
+  last_name: data.customerName?.split(' ').slice(1).join(' ') || "",
+  phone_number: data.customerPhone || "0000000000",
+});
 
-      if (chapaResponse.success && chapaResponse.data?.checkout_url) {
-        await prisma.payment.create({
-          data: {
-            saleId: pendingSale.id,
-            amount: netAmount,
-            method: "CHAPA",
-            status: "PENDING",
-            chapaTxRef: txRef,
-            paymentLink: chapaResponse.data.checkout_url,
-          },
-        });
-        return NextResponse.json({
-          paymentLink: chapaResponse.data.checkout_url,
-          saleId: pendingSale.id,
-          status: "PENDING_PAYMENT",
-        });
-      } else {
-        await prisma.sale.delete({ where: { id: pendingSale.id } });
-        throw new Error("Failed to initialize Chapa payment");
-      }
+if (chapaResult.success && chapaResult.checkout_url) {
+  await prisma.payment.create({
+    data: {
+      saleId: pendingSale.id,
+      amount: netAmount,
+      method: "CHAPA",
+      status: "PENDING",
+      chapaTxRef: txRef,
+      paymentLink: chapaResult.checkout_url,
+    },
+  });
+  console.log("tx_ref: ",txRef);
+
+  return NextResponse.json({
+    paymentLink: chapaResult.checkout_url,
+    saleId: pendingSale.id,
+    status: "PENDING_PAYMENT",
+  });
+} else {
+  await prisma.sale.delete({ where: { id: pendingSale.id } });
+  throw new Error(chapaResult.error || "Failed to initialize Chapa payment");
+}
     }
   } catch (error: any) {
     console.error("Create sale error:", error);
