@@ -1,69 +1,97 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import crypto from 'crypto';
 
-export async function POST(request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
-    const body = await request.json();
-    const headers = Object.fromEntries(request.headers);
-    const signature = headers['x-chapa-signature'] as string | undefined;
-
-    // Ensure required fields are present
-    if (!body.event || !body.tx_ref || !body.id) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    const tx_ref = request.nextUrl.searchParams.get("tx_ref");
+    if (!tx_ref) {
+      return NextResponse.json({ error: "Missing tx_ref" }, { status: 400 });
     }
 
-    const payload = JSON.stringify(body);
+    // 1. Verify with Chapa
+    const verifyUrl = `https://api.chapa.co/v1/transaction/verify/${tx_ref}`;
+    const response = await fetch(verifyUrl, {
+      headers: { Authorization: `Bearer ${process.env.CHAPA_SECRET_KEY}` },
+    });
+    const chapaData = await response.json();
 
-    // 1. Verify the webhook signature (security)
-    const hash = crypto
-      .createHmac('sha256', process.env.CHAPA_WEBHOOK_SECRET!)
-      .update(payload)
-      .digest('hex');
-
-    if (hash !== signature) {
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+    if (chapaData.status !== "success") {
+      return NextResponse.json({ error: "Payment not successful" }, { status: 400 });
     }
 
-    // 2. Log the webhook for audit
-    await prisma.chapaWebhookLog.create({
-      data: {
-        eventType: body.event,
-        chapaTxRef: body.tx_ref, // now guaranteed non-null
-        chapaTxId: body.id,      // guaranteed non-null
-        payload: body,
-      },
+    // 2. Find the pending payment with its sale
+    const payment = await prisma.payment.findUnique({
+      where: { chapaTxRef: tx_ref },
+      include: { sale: { include: { saleItems: true } } },
     });
 
-    // 3. Process the payment update
-    if (body.event === 'charge.success') {
-      const payment = await prisma.payment.findUnique({
-        where: { chapaTxRef: body.tx_ref },
-        include: { sale: true },
-      });
-
-      if (payment && payment.status === 'PENDING') {
-        await prisma.$transaction([
-          prisma.payment.update({
-            where: { id: payment.id },
-            data: { 
-              status: 'COMPLETED', 
-              paidAt: new Date(), 
-              chapaTxId: body.id 
-            },
-          }),
-          prisma.sale.update({
-            where: { id: payment.saleId! },
-            data: { status: 'COMPLETED' },
-          }),
-          // Add inventory update logic here if needed
-        ]);
-      }
+    if (!payment) {
+      return NextResponse.json({ error: "Payment record not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ received: true });
-  } catch (error) {
-    console.error('Chapa webhook error:', error);
-    return NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 });
+    // Ensure sale exists (it should, because we included it)
+    if (!payment.sale) {
+      return NextResponse.json({ error: "Associated sale not found" }, { status: 404 });
+    }
+
+    if (payment.status === "COMPLETED") {
+      return NextResponse.json({ success: true, message: "Already verified" });
+    }
+
+    // 3. Update sale, payment, and deduct stock
+    await prisma.$transaction(async (tx) => {
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: "COMPLETED",
+          paidAt: new Date(),
+          chapaTxId: chapaData.data?.id,
+        },
+      });
+
+      await tx.sale.update({
+        where: { id: payment.saleId! },
+        data: { status: "COMPLETED" },
+      });
+
+      for (const item of payment.sale!.saleItems) {
+        const drug = await tx.drug.findUnique({ where: { id: item.drugId } });
+        if (!drug) continue;
+
+        const newStock = drug.stock - item.quantity;
+        await tx.drug.update({
+          where: { id: item.drugId },
+          data: { stock: newStock },
+        });
+
+        if (item.batchId) {
+          const batch = await tx.drugBatch.findUnique({ where: { id: item.batchId } });
+          if (batch) {
+            await tx.drugBatch.update({
+              where: { id: item.batchId },
+              data: { remaining: batch.remaining - item.quantity },
+            });
+          }
+        }
+
+        await tx.inventoryLog.create({
+          data: {
+            drugId: item.drugId,
+            type: "SALE",
+            quantity: -item.quantity,
+            previousStock: drug.stock,
+            newStock,
+            saleId: payment.saleId,
+            batchNumber: item.batchNumber,
+            userId: payment.sale!.userId,
+          },
+        });
+      }
+    });
+
+    return NextResponse.json({ success: true, saleId: payment.saleId });
+  } catch (error: any) {
+    console.error("Verification error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

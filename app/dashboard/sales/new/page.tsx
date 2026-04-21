@@ -261,67 +261,75 @@ export default function NewSalePage() {
     }
   };
 
-  const onSubmit = async (data: SaleFormData) => {
-    // Client-side validation (stock/batch checks)
-    for (const item of data.items) {
-      const drug = drugs.find((d) => d.id === item.drugId);
-      if (!drug) {
-        toast.error("Invalid drug selection");
+ const onSubmit = async (data: SaleFormData) => {
+  // Client-side validation (stock/batch checks) – unchanged
+  for (const item of data.items) {
+    const drug = drugs.find((d) => d.id === item.drugId);
+    if (!drug) {
+      toast.error("Invalid drug selection");
+      return;
+    }
+    if (data.status === "COMPLETED") {
+      if (item.quantity > drug.stock) {
+        toast.error(`Insufficient stock for ${drug.name}. Available: ${drug.stock}`);
         return;
       }
-      if (data.status === "COMPLETED") {
-        if (item.quantity > drug.stock) {
-          toast.error(`Insufficient stock for ${drug.name}. Available: ${drug.stock}`);
+      const drugBatches = batches[item.drugId];
+      if (drugBatches && drugBatches.length > 0) {
+        if (!item.batchId) {
+          toast.error(`Please select a batch for ${drug.name}`);
           return;
         }
-        const drugBatches = batches[item.drugId];
-        if (drugBatches && drugBatches.length > 0) {
-          if (!item.batchId) {
-            toast.error(`Please select a batch for ${drug.name}`);
-            return;
-          }
-          const selectedBatch = drugBatches.find((b) => b.id === item.batchId);
-          if (!selectedBatch) {
-            toast.error(`Selected batch not found for ${drug.name}`);
-            return;
-          }
-          if (item.quantity > selectedBatch.remaining) {
-            toast.error(`Batch ${selectedBatch.batchNumber} has only ${selectedBatch.remaining} left`);
-            return;
-          }
-          if (new Date(selectedBatch.expiryDate) < new Date()) {
-            toast.error(`Batch ${selectedBatch.batchNumber} is expired`);
-            return;
-          }
+        const selectedBatch = drugBatches.find((b) => b.id === item.batchId);
+        if (!selectedBatch) {
+          toast.error(`Selected batch not found for ${drug.name}`);
+          return;
+        }
+        if (item.quantity > selectedBatch.remaining) {
+          toast.error(`Batch ${selectedBatch.batchNumber} has only ${selectedBatch.remaining} left`);
+          return;
+        }
+        if (new Date(selectedBatch.expiryDate) < new Date()) {
+          toast.error(`Batch ${selectedBatch.batchNumber} is expired`);
+          return;
         }
       }
     }
+  }
 
-    setLoading(true);
-    try {
-      // Prepare payload – omit email if empty string
-      const payload = {
-        ...data,
-        customerEmail: data.customerEmail && data.customerEmail.trim() !== "" ? data.customerEmail.trim() : undefined,
-      };
-      const res = await fetch("/api/sales", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const result = await res.json();
-      if (!res.ok) {
-        throw new Error(result.error || "Failed to create sale");
-      }
+  setLoading(true);
+  try {
+    // Prepare payload – omit email if empty string
+    const payload = {
+      ...data,
+      customerEmail: data.customerEmail && data.customerEmail.trim() !== "" ? data.customerEmail.trim() : undefined,
+    };
+    const res = await fetch("/api/sales", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const result = await res.json();
+    if (!res.ok) {
+      throw new Error(result.error || "Failed to create sale");
+    }
+
+    // Handle CHAPA payment – redirect to checkout
+    if (data.paymentMethod === "CHAPA" && result.paymentLink) {
+      // Redirect to Chapa checkout page
+      window.location.href = result.paymentLink;
+    } else {
+      // Normal flow (CASH, CARD, etc.)
       toast.success("Sale created successfully!");
       router.push("/dashboard/sales");
-    } catch (error: any) {
-      console.error("Submit sale error:", error);
-      toast.error(error.message);
-    } finally {
-      setLoading(false);
     }
-  };
+  } catch (error: any) {
+    console.error("Submit sale error:", error);
+    toast.error(error.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const calculateTotal = () => {
     const items = watch("items");

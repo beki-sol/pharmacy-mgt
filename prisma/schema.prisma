@@ -414,10 +414,10 @@ model Insurance {
 
 model Draft {
   id        String   @id @default(cuid())
+  userId    String
   data      Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  userId    String
 
   @@index([userId])
 }
@@ -457,7 +457,6 @@ enum InventoryAction {
   EXPIRED
   TRANSFER
 }
-
 model AppSetting {
   id        String   @id @default(cuid())
   key       String   @unique
