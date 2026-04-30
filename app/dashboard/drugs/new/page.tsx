@@ -5,6 +5,18 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import Papa from "papaparse";
+import { format } from "date-fns";
+import toast from "react-hot-toast";
+import {
+  Upload,
+  FileUp,
+  Loader2,
+  CalendarIcon,
+  Check,
+  X,
+} from "lucide-react";
+
 import { Header } from "@/app/components/dashboard/Header";
 import { Button } from "@/app/components/ui/Button";
 import { Input } from "@/app/components/ui/Input";
@@ -25,7 +37,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/Select";
-import { CalendarIcon, Loader2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/app/components/ui/Table";
 import { Calendar } from "@/app/components/ui/Calendar";
 import {
   Popover,
@@ -33,10 +60,8 @@ import {
   PopoverTrigger,
 } from "@/app/components/ui/Popover";
 import { cn } from "@/app/lib/utils";
-import { format } from "date-fns";
-import toast from "react-hot-toast";
 
-// Updated schema: categoryId instead of category enum
+// Form schema
 const drugFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   genericName: z.string().optional(),
@@ -78,6 +103,13 @@ export default function NewDrugPage() {
   const [loading, setLoading] = useState(false);
   const [fetchingData, setFetchingData] = useState(true);
 
+  // CSV import state
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvData, setCsvData] = useState<any[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<any>(null);
+
   const {
     register,
     handleSubmit,
@@ -118,6 +150,7 @@ export default function NewDrugPage() {
     fetchData();
   }, []);
 
+  // Single drug creation
   const onSubmit = async (data: DrugFormData) => {
     setLoading(true);
     try {
@@ -143,6 +176,61 @@ export default function NewDrugPage() {
     }
   };
 
+  // CSV import handlers
+  const handleFileUpload = (file: File) => {
+    setCsvFile(file);
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        setCsvData(results.data);
+        toast.success(`Parsed ${results.data.length} rows`);
+      },
+      error: (error) => {
+        toast.error("Failed to parse CSV: " + error.message);
+      },
+    });
+  };
+
+  const handleImport = async () => {
+  if (!csvData.length) {
+    toast.error("No data to import");
+    return;
+  }
+  setImporting(true);
+  try {
+    const res = await fetch("/api/drug/bulk-import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rows: csvData }),
+    });
+    const result = await res.json();
+    if (!res.ok) {
+      // Show detailed validation errors from API
+      const errorMsg = result.details ? result.details.join(", ") : result.error;
+      throw new Error(errorMsg || "Import failed");
+    }
+    setImportResult(result);
+    toast.success(`Imported ${result.results?.length || 0} items`);
+    if (result.errors?.length) {
+      toast.error(`${result.errors.length} rows failed`);
+      console.error("Import errors:", result.errors);
+      // Optionally show errors in the UI
+      setImportResult((prev: any) => ({ ...prev, detailedErrors: result.errors }));
+    }
+    setTimeout(() => {
+      router.refresh();
+      setImportDialogOpen(false);
+      setCsvFile(null);
+      setCsvData([]);
+      setImportResult(null);
+    }, 2000);
+  } catch (err: any) {
+    toast.error(err.message);
+  } finally {
+    setImporting(false);
+  }
+};
   if (fetchingData) {
     return (
       <>
@@ -156,7 +244,16 @@ export default function NewDrugPage() {
 
   return (
     <>
-      <Header title="Add New Drug" subtitle="Create a new drug record" />
+      <Header
+        title="Add New Drug"
+        subtitle="Create a new drug record or import multiple from CSV"
+        actions={
+          <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
+            <Upload className="mr-2 h-4 w-4" />
+            Import CSV
+          </Button>
+        }
+      />
       <div className="p-6 max-w-4xl mx-auto">
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           <Card>
@@ -387,6 +484,92 @@ export default function NewDrugPage() {
           </Card>
         </form>
       </div>
+
+      {/* CSV Import Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Import Drugs from CSV</DialogTitle>
+            <DialogDescription>
+              Upload a CSV file with columns: drugName, genericName, category, brand, dosage, unit, price, costPrice, barcode, batchNumber, expiryDate (YYYY-MM-DD), quantityTransferred (optional). 
+              The system will create categories, drugs, and batches automatically.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* File upload area */}
+            <div className="border-2 border-dashed rounded-lg p-6 text-center">
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(e) => e.target.files && handleFileUpload(e.target.files[0])}
+                className="hidden"
+                id="csv-upload"
+              />
+              <label htmlFor="csv-upload" className="cursor-pointer inline-flex items-center gap-2 text-primary">
+                <FileUp className="h-6 w-6" />
+                <span>Choose CSV file</span>
+              </label>
+              {csvFile && <p className="mt-2 text-sm">Selected: {csvFile.name}</p>}
+            </div>
+
+            {/* Preview table */}
+            {csvData.length > 0 && (
+              <div>
+                <h3 className="font-medium mb-2">Preview (first 5 rows)</h3>
+                <div className="border rounded-md overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {Object.keys(csvData[0]).map((key) => (
+                          <TableHead key={key}>{key}</TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {csvData.slice(0, 5).map((row, idx) => (
+                        <TableRow key={idx}>
+                          {Object.values(row).map((val: any, i) => (
+                            <TableCell key={i}>{String(val).slice(0, 30)}</TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+
+            {/* Import result summary */}
+            {importResult && (
+              <div className="space-y-2 p-3 bg-gray-50 rounded-md">
+                <h3 className="font-medium">Import Result</h3>
+                <p>✅ Success: {importResult.results?.length || 0}</p>
+                {importResult.errors?.length > 0 && (
+                  <div className="text-destructive">
+                    <p>❌ Errors: {importResult.errors.length}</p>
+                    <ul className="text-sm list-disc pl-4">
+                      {importResult.errors.slice(0, 3).map((err: any, i: number) => (
+                        <li key={i}>{err.row}: {err.error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleImport} disabled={!csvData.length || importing}>
+              {importing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

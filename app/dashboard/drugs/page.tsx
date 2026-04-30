@@ -22,7 +22,17 @@ import {
   SelectValue,
 } from "@/app/components/ui/Select";
 import { Label } from "@/app/components/ui/Label";
-import { Plus, Search, Eye, Edit, Trash, ShoppingCart } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/app/components/ui/alert-dialog";
+import { Plus, Search, Eye, Edit, Trash, ShoppingCart, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency } from "@/app/lib/utils";
 import toast from "react-hot-toast";
@@ -44,6 +54,7 @@ interface Drug {
   expiryDate: string | null;
   batches?: Batch[];
   supplier?: { name: string; email: string } | null;
+  isActive?: boolean;
 }
 
 interface Category {
@@ -67,7 +78,9 @@ function getExpiryStatus(expiryDate: string | null) {
   if (!expiryDate) return <Badge variant="secondary">No Expiry</Badge>;
   const daysUntil = (new Date(expiryDate).getTime() - Date.now()) / (1000 * 3600 * 24);
   if (daysUntil < 0) return <Badge variant="destructive">Expired</Badge>;
-  if (daysUntil < 30) return <Badge variant="warning">Expires Soon</Badge>;
+
+  if (daysUntil < 60) return <Badge variant="warning">Expires Soon</Badge>;
+
   return <Badge variant="success">Valid</Badge>;
 }
 
@@ -84,6 +97,12 @@ export default function DrugsPage() {
   const [expired, setExpired] = useState("");
   const [sortBy, setSortBy] = useState("name");
   const [sortOrder, setSortOrder] = useState("asc");
+  const [showInactive, setShowInactive] = useState(false);
+
+  // Delete state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [drugToDelete, setDrugToDelete] = useState<Drug | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Fetch categories on mount
   useEffect(() => {
@@ -99,32 +118,35 @@ export default function DrugsPage() {
     fetchCategories();
   }, []);
 
+  // Fetch drugs
+  const fetchDrugs = async () => {
+    setLoading(true);
+    const params = new URLSearchParams({
+      page: pagination.page.toString(),
+      limit: pagination.limit.toString(),
+      search,
+      ...(selectedCategoryId && { categoryId: selectedCategoryId }),
+      ...(lowStock === "true" && { lowStock: "true" }),
+      ...(expired === "true" && { expired: "true" }),
+      ...(showInactive && { showInactive: "true" }),
+      sortBy,
+      sortOrder,
+    });
+    try {
+      const res = await fetch(`/api/drug?${params}`);
+      const data = await res.json();
+      setDrugs(data.drugs || []);
+      setPagination(data.pagination || { page: 1, limit: 10, total: 0, pages: 0 });
+    } catch (error) {
+      console.error("Failed to fetch drugs", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchDrugs = async () => {
-      setLoading(true);
-      const params = new URLSearchParams({
-        page: pagination.page.toString(),
-        limit: pagination.limit.toString(),
-        search,
-        ...(selectedCategoryId && { categoryId: selectedCategoryId }),
-        ...(lowStock === "true" && { lowStock: "true" }),
-        ...(expired === "true" && { expired: "true" }),
-        sortBy,
-        sortOrder,
-      });
-      try {
-        const res = await fetch(`/api/drug?${params}`);
-        const data = await res.json();
-        setDrugs(data.drugs || []);
-        setPagination(data.pagination || { page: 1, limit: 10, total: 0, pages: 0 });
-      } catch (error) {
-        console.error("Failed to fetch drugs", error);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchDrugs();
-  }, [pagination.page, search, selectedCategoryId, lowStock, expired, sortBy, sortOrder]);
+  }, [pagination.page, search, selectedCategoryId, lowStock, expired, sortBy, sortOrder, showInactive]);
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(e.target.value);
@@ -138,6 +160,7 @@ export default function DrugsPage() {
     setExpired("");
     setSortBy("name");
     setSortOrder("asc");
+    setShowInactive(false);
     setPagination(prev => ({ ...prev, page: 1 }));
   };
 
@@ -151,6 +174,30 @@ export default function DrugsPage() {
     if (!cat) return '—';
     if (typeof cat === 'string') return cat.replace(/_/g, " ");
     return cat.name?.replace(/_/g, " ") || '—';
+  };
+
+  // Delete handlers
+  const handleDeleteClick = (drug: Drug) => {
+    setDrugToDelete(drug);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!drugToDelete) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/drug/${drugToDelete.id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Delete failed");
+      toast.success(data.message || `Drug "${drugToDelete.name}" deleted/deactivated`);
+      setDeleteDialogOpen(false);
+      setDrugToDelete(null);
+      await fetchDrugs();
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -171,7 +218,7 @@ export default function DrugsPage() {
         {/* Filters */}
         <Card>
           <CardContent className="p-4">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
               <div className="space-y-2">
                 <Label>Search</Label>
                 <div className="relative">
@@ -186,7 +233,7 @@ export default function DrugsPage() {
               </div>
               <div className="space-y-2">
                 <Label>Category</Label>
-                <Select value={selectedCategoryId} onValueChange={setSelectedCategoryId}>
+                <Select value={selectedCategoryId || "ALL"} onValueChange={(val) => setSelectedCategoryId(val === "ALL" ? "" : val)}>
                   <SelectTrigger>
                     <SelectValue placeholder="All Categories" />
                   </SelectTrigger>
@@ -244,6 +291,18 @@ export default function DrugsPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="flex items-end">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="showInactive"
+                    checked={showInactive}
+                    onChange={(e) => setShowInactive(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  <Label htmlFor="showInactive">Show inactive drugs</Label>
+                </div>
+              </div>
             </div>
             <div className="flex justify-end mt-4">
               <Button variant="outline" size="sm" onClick={clearFilters}>
@@ -276,13 +335,17 @@ export default function DrugsPage() {
                 <TableBody>
                   {drugs.map((drug) => {
                     const effectiveExpiry = getEffectiveExpiryDate(drug);
+                    const isInactive = drug.isActive === false;
                     return (
-                      <TableRow key={drug.id}>
+                      <TableRow key={drug.id} className={isInactive ? "bg-muted/40" : ""}>
                         <TableCell className="font-medium">
                           <div>
                             {drug.name}
                             {drug.genericName && (
                               <p className="text-xs text-muted-foreground">{drug.genericName}</p>
+                            )}
+                            {isInactive && (
+                              <Badge variant="secondary" className="mt-1">Inactive</Badge>
                             )}
                           </div>
                         </TableCell>
@@ -312,7 +375,12 @@ export default function DrugsPage() {
                               <ShoppingCart className="h-4 w-4" />
                             </Link>
                           </Button>
-                          <Button variant="ghost" size="icon" className="text-destructive">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive"
+                            onClick={() => handleDeleteClick(drug)}
+                          >
                             <Trash className="h-4 w-4" />
                           </Button>
                         </TableCell>
@@ -350,6 +418,26 @@ export default function DrugsPage() {
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Drug</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{drugToDelete?.name}"? 
+              {drugToDelete?.stock && drugToDelete.stock > 0 && " It still has stock. If there are transactions, it will be deactivated instead of permanently deleted."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} disabled={deleting}>
+              {deleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

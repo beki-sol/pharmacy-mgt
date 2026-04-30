@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/app/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/lib/auth";
+import { Prisma } from "@prisma/client";
 
 const drugSchema = z.object({
   name: z.string().min(1),
@@ -38,6 +39,7 @@ export async function GET(request: NextRequest) {
   const categoryId = searchParams.get("categoryId");
   const lowStock = searchParams.get("lowStock");
   const expired = searchParams.get("expired");
+  const status = searchParams.get("status") || "ACTIVE";
 
   let sortBy = searchParams.get("sortBy") || "name";
   const sortOrder = searchParams.get("sortOrder") === "desc" ? "desc" : "asc";
@@ -45,7 +47,13 @@ export async function GET(request: NextRequest) {
   if (!allowedSortFields.includes(sortBy)) sortBy = "name";
 
   const skip = (page - 1) * limit;
-  let where: any = { isActive: true };
+  let where: any = {};
+  if (status === "ACTIVE") {
+    where.isActive = true;
+  } else if (status === "INACTIVE") {
+    where.isActive = false;
+  }
+  // if status === "ALL", no isActive filter
 
   if (search) {
     where.OR = [
@@ -61,12 +69,17 @@ export async function GET(request: NextRequest) {
   if (lowStock === "true") {
     const lowStockIds = await prisma.$queryRaw<{ id: string }[]>`
       SELECT id FROM "Drug"
-      WHERE stock <= "minStockLevel" AND "isActive" = true
+      WHERE stock <= "minStockLevel" 
+      ${status === "ACTIVE" ? Prisma.sql`AND "isActive" = true` : 
+        status === "INACTIVE" ? Prisma.sql`AND "isActive" = false` : 
+        Prisma.sql``}
     `;
     where.id = lowStockIds.length ? { in: lowStockIds.map(d => d.id) } : { in: [] };
   }
 
-  if (expired === "true") where.expiryDate = { lt: new Date() };
+  if (expired === "true") {
+    where.expiryDate = { lt: new Date() };
+  }
 
   const [drugs, total] = await Promise.all([
     prisma.drug.findMany({
@@ -83,13 +96,13 @@ export async function GET(request: NextRequest) {
     prisma.drug.count({ where }),
   ]);
 
-  // Transform drugs to include a plain category string
   const transformedDrugs = drugs.map(drug => ({
     ...drug,
-    category: drug.category?.name || null,   // replaces the category object with its name
-    categoryId: drug.categoryId,             // keep the ID if needed
+    category: drug.category?.name || null,
+    categoryId: drug.categoryId,
   }));
 
+  // Alerts still only for active drugs (unchanged)
   const lowStockDrugs = await prisma.$queryRaw<{ id: string; name: string; stock: number; minStockLevel: number }[]>`
     SELECT id, name, stock, "minStockLevel"
     FROM "Drug"
