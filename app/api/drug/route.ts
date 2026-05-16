@@ -132,28 +132,60 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const data = drugSchema.parse({
+
+  // Convert empty strings to undefined for nullable fields
+  const cleanedBody = {
     ...body,
-    price: parseFloat(body.price),
-    costPrice: parseFloat(body.costPrice),
-    stock: parseInt(body.stock),
-    minStockLevel: parseInt(body.minStockLevel),
-    maxStockLevel: parseInt(body.maxStockLevel),
-    reorderPoint: parseInt(body.reorderPoint),
+    barcode: body.barcode && body.barcode.trim() !== "" ? body.barcode : undefined,
+    batchNumber: body.batchNumber && body.batchNumber.trim() !== "" ? body.batchNumber : undefined,
+    supplierId: body.supplierId && body.supplierId.trim() !== "" ? body.supplierId : undefined,
+  };
+
+  const data = drugSchema.parse({
+    ...cleanedBody,
+    price: parseFloat(cleanedBody.price),
+    costPrice: parseFloat(cleanedBody.costPrice),
+    stock: parseInt(cleanedBody.stock),
+    minStockLevel: parseInt(cleanedBody.minStockLevel),
+    maxStockLevel: parseInt(cleanedBody.maxStockLevel),
+    reorderPoint: parseInt(cleanedBody.reorderPoint),
   });
 
+  // Only check barcode existence if a valid barcode is provided
   if (data.barcode) {
     const existing = await prisma.drug.findUnique({ where: { barcode: data.barcode } });
-    if (existing) return NextResponse.json({ error: "Barcode already exists" }, { status: 400 });
+    if (existing) {
+      return NextResponse.json({ error: "Barcode already exists" }, { status: 400 });
+    }
   }
 
   const drug = await prisma.$transaction(async (tx: any) => {
-    const newDrug = await tx.drug.create({
-      data: {
-        ...data,
-        expiryDate: data.expiryDate ? new Date(data.expiryDate) : null,
-      },
-    });
+    // Remove barcode from the data object if it's undefined
+    const createData: any = {
+      name: data.name,
+      genericName: data.genericName,
+      brand: data.brand,
+      categoryId: data.categoryId,
+      dosage: data.dosage,
+      unit: data.unit,
+      price: data.price,
+      costPrice: data.costPrice,
+      stock: data.stock,
+      minStockLevel: data.minStockLevel,
+      maxStockLevel: data.maxStockLevel,
+      reorderPoint: data.reorderPoint,
+      expiryDate: data.expiryDate ? new Date(data.expiryDate) : null,
+      batchNumber: data.batchNumber,
+      supplierId: data.supplierId,
+      description: data.description,
+      sideEffects: data.sideEffects,
+      storageCondition: data.storageCondition,
+    };
+    if (data.barcode) {
+      createData.barcode = data.barcode;
+    }
+
+    const newDrug = await tx.drug.create({ data: createData });
 
     if (data.batchNumber && data.stock > 0) {
       await tx.drugBatch.create({

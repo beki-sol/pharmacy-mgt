@@ -111,6 +111,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   return NextResponse.json(updated);
 }
+
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.role !== "ADMIN") {
@@ -120,18 +121,31 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   const { id } = await params;
   const drug = await prisma.drug.findUnique({
     where: { id },
-    include: { saleItems: { take: 1 }, purchaseItems: { take: 1 }, prescriptions: { take: 1 } },
+    include: {
+      saleItems: { take: 1 },
+      purchaseItems: { take: 1 },
+      prescriptions: { take: 1 },
+      inventoryLogs: { take: 1 }, // <-- added inventoryLogs
+    },
   });
   if (!drug) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  if (drug.saleItems.length || drug.purchaseItems.length || drug.prescriptions.length) {
+  // If any dependent records exist (including inventory logs), soft delete
+  if (
+    drug.saleItems.length ||
+    drug.purchaseItems.length ||
+    drug.prescriptions.length ||
+    drug.inventoryLogs.length
+  ) {
     await prisma.drug.update({ where: { id }, data: { isActive: false } });
-    return NextResponse.json({ message: "Drug deactivated (has transactions)" });
+    return NextResponse.json({ message: "Drug deactivated (has transactions or logs)" });
   }
 
+  // Otherwise, fully delete (batches and inventory logs must be deleted first)
   await prisma.$transaction(async (tx: any) => {
     await tx.drugBatch.deleteMany({ where: { drugId: id } });
+    await tx.inventoryLog.deleteMany({ where: { drugId: id } });
     await tx.drug.delete({ where: { id } });
   });
-  return NextResponse.json({ message: "Deleted" });
+  return NextResponse.json({ message: "Deleted permanently" });
 }

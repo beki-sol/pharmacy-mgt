@@ -292,11 +292,11 @@ export default function DrugViewPage() {
                 <Edit className="mr-2 h-4 w-4" /> Edit
               </Link>
             </Button>
-            {drug.batches.length > 0 && (
+           
               <Button variant="outline" onClick={() => setAddBatchOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" /> Add Batch
               </Button>
-            )}
+            
           </div>
         }
       />
